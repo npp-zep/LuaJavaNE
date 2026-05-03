@@ -1,6 +1,7 @@
 package com.luajava;
 
 import java.io.*;
+import org.jline.reader.*;
 
 public class LuaJMain {
     static LuaRuntime L;
@@ -65,12 +66,25 @@ public class LuaJMain {
         L = new LuaRuntime();
         L.doString("java = require 'java'");
         version();
-        System.out.println("Type \\q to quit, \\h for help.");
-        LineEditor editor = new LineEditor(System.in);
+        System.out.println("Type \\q to quit, Ctrl+C to cancel, Ctrl+D to exit.");
+        LineEditor editor = new LineEditor();
 
         while (true) {
             String prompt = (nesting > 0) ? ">> " : "> ";
-            String line = editor.readLine(prompt);
+            String line;
+            try {
+                line = editor.readLine(prompt);
+            } catch (UserInterruptException e) {
+                // Ctrl+C: 取消当前输入
+                System.out.println("^C");
+                buffer.setLength(0);
+                nesting = 0;
+                continue;
+            } catch (EndOfFileException e) {
+                // Ctrl+D: 退出
+                System.out.println();
+                break;
+            }
             if (line == null) break;
 
             line = line.trim();
@@ -79,9 +93,8 @@ public class LuaJMain {
                 System.out.println("Commands: \\q quit, \\h help, =expr print result");
                 continue;
             }
-            // = 前缀：打印表达式结果
             if (line.startsWith("=")) {
-                line = "io.write(tostring(" + line.substring(1) + "), '\\n')";
+                line = "io.write(tostring(" + line.substring(1) + "), '\\n'); io.flush()";
             }
             buffer.append(line).append("\n");
             nesting += countNesting(line);
