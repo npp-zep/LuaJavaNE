@@ -7,3 +7,6 @@ out/
 *.dylib
 *.dll
 .DS_Store
+
+# keep jline.jar
+!jline.jar
