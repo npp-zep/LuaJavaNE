@@ -27,6 +27,8 @@ public class LineEditor {
         try {
             new ProcessBuilder("sh", "-c", "stty echo -raw < /dev/tty")
                 .inheritIO().start().waitFor();
+            // 等待终端恢复
+            Thread.sleep(10);
         } catch (Exception ignored) {}
     }
 
@@ -45,21 +47,11 @@ public class LineEditor {
                 int c = reader.read();
                 if (c == -1) { running = false; break; }
 
-                // Ctrl+C: 打印 ^C，返回空字符串让调用者退出
-                if (c == 3) {
-                    System.out.println("^C");
-                    line.setLength(0);
-                    break;
-                }
-
-                // Ctrl+D: 退出
-                if (c == 4) {
-                    System.out.println("^D");
-                    return null;
-                }
+                if (c == 3) { System.out.println("^C"); line.setLength(0); break; }
+                if (c == 4) { System.out.println(); return null; }
 
                 if (c == '\n' || c == '\r') {
-                    System.out.println();
+                    System.out.print("\r\n");
                     break;
                 } else if (c == 127 || c == 8) {
                     if (cursor > 0) {
@@ -99,7 +91,7 @@ public class LineEditor {
                                 redraw(prompt);
                             }
                         } else if (c3 == '3') {
-                            reader.read(); // '~'
+                            reader.read();
                             if (cursor < line.length()) {
                                 line.deleteCharAt(cursor);
                                 redraw(prompt);
