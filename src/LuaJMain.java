@@ -8,7 +8,7 @@ public class LuaJMain {
     static int nesting = 0;
 
     public static void main(String[] args) {
-        if (args.length == 0) { repl(); return; }
+        if (args.length == 0) { try { repl(); } catch (IOException e) { System.err.println(e.getMessage()); } return; }
         String arg = args[0];
         if (arg.equals("-e") && args.length >= 2) { execString(args[1]); }
         else if (arg.equals("-v") || arg.equals("--version")) { version(); }
@@ -26,7 +26,6 @@ public class LuaJMain {
     }
 
     static String getBuildTime() {
-        // 从 MANIFEST 或文件读取构建时间，fallback 用编译时的日期
         try {
             java.util.jar.JarFile jar = new java.util.jar.JarFile("luajava.jar");
             java.util.jar.Manifest mf = jar.getManifest();
@@ -62,49 +61,50 @@ public class LuaJMain {
         rt.close();
     }
 
-    static void repl() {
+    static void repl() throws IOException {
         L = new LuaRuntime();
         L.doString("java = require 'java'");
         version();
         System.out.println("Type \\q to quit, \\h for help.");
-        System.out.print("> ");
+        LineEditor editor = new LineEditor(System.in);
 
-        try {
-            BufferedReader r = new BufferedReader(new InputStreamReader(System.in));
-            String line;
-            while ((line = r.readLine()) != null) {
-                line = line.trim();
-                if (line.equals("\\q") || line.equals("\\quit")) break;
-                if (line.equals("\\h") || line.equals("\\help")) {
-                    System.out.println("Commands: \\q quit, \\h help, =expr shorthand for return expr");
-                    System.out.print("> "); continue;
-                }
-                if (line.startsWith("=")) line = "return " + line.substring(1);
-                buffer.append(line).append("\n");
-                nesting += countNesting(line);
-                if (nesting <= 0) {
-                    execChunk(buffer.toString());
-                    buffer.setLength(0); nesting = 0;
-                } else {
-                    System.out.print(">> ");
-                }
+        while (true) {
+            String prompt = ">".repeat(nesting + 1) + " ";;
+            String line = editor.readLine(prompt);
+            if (line == null) break;
+
+            if (line.isEmpty()) { System.out.println("Type \\q to quit."); continue; }
+            line = line.trim();
+            if (line.equals("\\q") || line.equals("\\quit")) break;
+            if (line.equals("\\h") || line.equals("\\help")) {
+                System.out.println("Commands: \\q quit, \\h help, =expr shorthand");
+                continue;
             }
-        } catch (IOException e) { System.err.println(e.getMessage()); }
+            if (line.startsWith("=")) line = "return " + line.substring(1);
+            buffer.append(line).append("\n");
+            nesting += countNesting(line);
+            if (nesting <= 0) {
+                execChunk(buffer.toString());
+                buffer.setLength(0); nesting = 0;
+            }
+        }
+        try { Runtime.getRuntime().exec(new String[]{"stty", "echo", "-raw", "<", "/dev/tty"}).waitFor(); } catch (Exception ignored) {}
         L.close();
     }
 
     static void execChunk(String code) {
+        code = code.replaceAll("(?m)^\s+", ""); // 去掉每行的前导空格
         L.doString(
-            "local fn, err = load(" + quote(code) + ")\n" +
+            "local fn, err = load(" + quote(code) + ", '=stdin')\n" +
             "if fn then\n" +
             "    local ok, res = pcall(fn)\n" +
             "    if ok then\n" +
             "        if res ~= nil then print(res) end\n" +
             "    else\n" +
-            "        print('error: ' .. tostring(res))\n" +
+            "        print(debug.traceback(res, 0))\n" +
             "    end\n" +
             "else\n" +
-            "    print('error: ' .. err)\n" +
+            "    print('Syntax:', err)\n" +
             "end"
         );
     }
@@ -115,14 +115,11 @@ public class LuaJMain {
 
     static int countNesting(String line) {
         int n = 0;
-        for (char c : line.toCharArray()) {
-            if (c=='('||c=='{'||c=='[') n++;
-            if (c==')'||c=='}'||c==']') n--;
-        }
         String t = line.trim();
         if (t.equals("end") || t.startsWith("until ")) n--;
+        if (t.equals("do") || t.equals("else")) n++;
         if (t.startsWith("function ") || t.startsWith("if ") || t.startsWith("for ") ||
-            t.startsWith("while ") || t.equals("do") || t.startsWith("repeat")) n++;
+            t.startsWith("while ") || t.startsWith("repeat")) n++;
         return n;
     }
 }
