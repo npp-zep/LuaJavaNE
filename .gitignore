@@ -1,12 +1,7 @@
 build/
 out/
-*.class
-*.jar
-*.o
+luajava.jar
 *.so
 *.dylib
 *.dll
 .DS_Store
-
-# keep jline.jar
-!jline.jar
