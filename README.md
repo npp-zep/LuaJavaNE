@@ -1,295 +1,178 @@
+
 ![Lua](https://img.shields.io/badge/Lua-5.4.8-blue) ![Java](https://img.shields.io/badge/Java-17%2B-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
+# LuaJavaNE
 
-LuaJavaNE
+Lua 5.4.8 + Java 双向互调引擎。在 Lua 里直接调用任何 Java 类库，在 Java 里执行 Lua 脚本。
 
-Lua 5.4.8 + Java 双向互调引擎。让 Lua 脚本能直接调用任意 Java 类，Java 也能无缝执行 Lua 代码。
+## 快速开始
 
-作者： npp-zep
-版本： 1.0
-基于： Lua 5.4.8
+### 下载预编译版本
 
----
-
-快速开始
-
-启动 REPL
+从 [Releases](https://github.com/npp-zep/LuaJavaNE/releases) 下载 `luajava.jar` 和 `luajava.so`。
 
 ```bash
-./luaj.sh
+java -Dluajava.library.path=./luajava.so -jar luajava.jar -e "print('Hello')"
+java -Dluajava.library.path=./luajava.so -jar luajava.jar
 ```
 
-```
-luaj - LuaJavaNE interpreter v1.0
-Lua 5.4.8 with Java interop
-Build: 2026-05-03 22:49:44
-JDK: 17.0.18 (Termux)
-Author: npp-zep
-Type \q to quit, \h for help.
-> = java.import('java.lang.System').currentTimeMillis()
-1777819422945
-```
-
-执行脚本
+本地编译
 
 ```bash
-./luaj.sh script.lua
-./luaj.sh -e "print('Hello')"
+git clone git@github.com:npp-zep/LuaJavaNE.git
+cd LuaJavaNE
+mkdir build && cd build && cmake .. && make -j4 && cd ..
+javac -d out src/*.java && jar cvf luajava.jar -C out .
+./luaj.sh -e "print(java.import('java.lang.System').currentTimeMillis())"
 ```
 
-在 Java 项目中嵌入
+需要 JDK 17+、CMake 3.14+、GCC/Clang，以及 pthread。
+
+ARM64 / Android / Termux：Release 提供的 .so 是 x86_64 Linux 的。ARM64 用户需要本地编译，编译步骤同上，CMake 会自动检测架构。
+
+作为库使用
+
+Java 调用 Lua
 
 ```java
 LuaRuntime L = new LuaRuntime();
-L.doString("print('Hello from Java')");
-L.callFunction("myFunc", arg1, arg2);
+L.doString("function add(a, b) return a + b end");
+Object result = L.callFunction("add", 3, 5); // 8
+
+// 编译函数反复调用
+LuaFunctionObj fn = L.compile("return function(x) return x * 2 end");
+LuaFunctionObj doubler = (LuaFunctionObj) fn.call();
+doubler.call(21); // 42
+fn.destroy();
+doubler.destroy();
 L.close();
 ```
 
----
-
-Java → Lua
-
-基础 API
-
-方法 说明
-L.doString(script) 执行 Lua 代码
-L.doFile(path) 执行 Lua 文件
-L.setGlobal(name, value) 设置全局变量
-L.getGlobal(name) 获取全局变量（返回 String）
-L.callFunction(name, args...) 调用全局函数，返回第一个返回值
-L.callFunctionMultiple(name, args...) 调用全局函数，返回所有返回值（Object[]）
-L.compile(luaCode) 编译代码为 LuaFunctionObj 对象
-L.registerModule(obj) 注册带 @LuaModule 注解的对象
-
-LuaFunctionObj
-
-```java
-LuaFunctionObj fn = L.compile("return function(x) return x * 2 end");
-LuaFunctionObj doubler = (LuaFunctionObj) fn.call();
-doubler.call(21);  // → 42
-doubler.callMultiple(args...);  // → Object[] 多返回值
-doubler.destroy();
-```
-
-类型映射（Java→Lua）
-
-Java 类型 转为 Lua 类型
-String string
-Integer integer
-Double number
-Boolean boolean
-null nil
-LuaFunctionObj function
-
-类型映射（Lua→Java）
-
-Lua 类型 转为 Java 类型
-string String
-integer Integer
-number Double
-boolean Boolean
-nil null
-function LuaFunctionObj
-
----
-
-Lua → Java
-
-Lua 侧通过内置 java 库访问 Java。
-
-导入类
+Lua 调用 Java
 
 ```lua
-local String = java.import('java.lang.String')
-local Integer = java.import('java.lang.Integer')
-local System = java.import('java.lang.System')
+local java = require("java")
+local String = java.import("java.lang.String")
+local s = String:new("Hello World")
+print(s:length())          -- 11
+print(s:substring(0, 5))   -- Hello
+print(s:equals("Hello World")) -- true
 ```
-
-创建对象
-
-```lua
-local s = String:new('Hello World')
-local point = java.import('java.awt.Point'):new(10, 20)
-```
-
-调用实例方法
-
-```lua
-s:length()           -- → 11
-s:substring(0, 5)    -- → "Hello"
-s:equals('test')     -- → false
-s:toUpperCase()      -- → "HELLO WORLD"
-```
-
-调用静态方法
-
-```lua
-Integer.parseInt('42')       -- → 42
-Integer.toString(255)        -- → "255"
-System.currentTimeMillis()   -- → 1777819244661
-```
-
-访问字段
-
-```lua
--- 读取
-Integer.MAX_VALUE      -- → 2147483647
-point.x                -- → 10
-
--- 写入
-point.x = 100
-point.y = 200
-```
-
-数组操作
-
-```lua
-local arr = java.newArray('int', 5)
-arr[0] = 42
-arr[1] = 100
-print(#arr)            -- → 5
-print(arr[0])          -- → 42
-
--- 支持的数组类型: "int", "double", "boolean", "String"
-```
-
-动态代理（Lua 表实现 Java 接口）
-
-```lua
-local Runnable = java.import('java.lang.Runnable')
-local Thread = java.import('java.lang.Thread')
-
-local handler = {
-    run = function(self)
-        print('Hello from Lua proxy thread!')
-    end
-}
-
-local proxy = java.createProxy({'java.lang.Runnable'}, handler)
-local thread = Thread:new(proxy)
-thread:start()
-```
-
-java.createProxy(interfaceNames, table) 接收接口名数组和 Lua 表，返回一个 Java 代理对象。表中以方法名为键的函数会被调用。
-
-方法重载
-
-自动根据参数类型匹配最合适的重载方法。支持 int、double、String、boolean、Object 的参数组合。
-
----
 
 注解绑定
 
-用注解将 Java 方法自动暴露为 Lua 全局函数。
-
 ```java
-@LuaModule("mymod")
-class MyModule {
+@LuaModule("math")
+class MyMath {
     @LuaFunction
     public int add(int a, int b) { return a + b; }
-
-    @LuaFunction("greet")
-    public String hello(String name) { return "Hello, " + name; }
+    @LuaFunction("multiply")
+    public int mul(int a, int b) { return a * b; }
 }
 
 LuaRuntime L = new LuaRuntime();
-L.registerModule(new MyModule());
-L.doString("print(mymod_add(3, 5))");      // → 8
-L.doString("print(mymod_greet('World'))"); // → "Hello, World"
+L.registerModule(new MyMath());
+L.doString("print(math_add(3, 5))");      // 8
+L.doString("print(math_multiply(6, 7))"); // 42
 ```
 
-· @LuaModule("prefix") — 模块名前缀，生成 prefix_methodName 格式的全局函数
-· @LuaFunction("name") — 自定义函数名，省略则用 Java 方法名
-· 支持 int、String、boolean、double 参数和返回值，自动装箱拆箱
+动态代理
 
----
-
-线程安全
-
-所有 native 调用都由 pthread 互斥锁保护。多个线程可以安全地共享同一个 LuaRuntime 实例。代理回调（InvocationHandler.invoke）也在锁内执行。
-
----
-
-库加载策略
-
-LuaRuntime 按以下顺序查找 luajava.so：
-
-1. 系统属性 luajava.library.path
-2. 环境变量 LUAJAVA_LIBRARY_PATH
-3. java.library.path 中的 libluajava.so
-4. 当前目录 ./build/luajava.so、./luajava.so、./libluajava.so
-
-启动时可通过参数指定：
-
-```bash
-java -Dluajava.library.path=/path/to/luajava.so ...
+```lua
+local Runnable = java.import("java.lang.Runnable")
+local Thread = java.import("java.lang.Thread")
+local handler = {
+    run = function(self) print("Hello from Lua thread!") end
+}
+local proxy = java.createProxy({"java.lang.Runnable"}, handler)
+local t = Thread:new(proxy)
+t:start()
 ```
 
----
+数组
 
-CLI 用法
-
-```bash
-luaj                    # 启动 REPL
-luaj script.lua         # 执行脚本
-luaj -e "code"          # 执行代码
-luaj -v                 # 打印版本
-luaj -h                 # 打印帮助
+```lua
+local arr = java.newArray("int", 3)
+arr[0] = 100; arr[1] = 200; arr[2] = 300
+print(#arr)        -- 3
+print(arr[1])      -- 200
 ```
 
-REPL 特殊命令：
+API 参考
 
-· \q / \quit — 退出
-· \h / \help — 帮助
-· = expr — 计算并打印表达式结果
-· 自动检测多行块（function/if/for/while）
+Java 侧
 
----
+方法 说明
+LuaRuntime() 创建 Lua 虚拟机
+doString(script) 执行 Lua 代码
+doFile(path) 执行 Lua 文件
+setGlobal(k, v) 设置全局字符串变量
+getGlobal(k) 获取全局字符串变量
+callFunction(name, args...) 调用全局函数，返回第一个值
+callFunctionMultiple(name, args...) 调用全局函数，返回所有值
+compile(code) 编译代码为 LuaFunctionObj
+registerModule(obj) 注册带 @LuaModule 注解的对象
+close() 关闭虚拟机
 
-构建
+Lua 侧
 
-```bash
-mkdir build && cd build
-cmake ..
-make -j4
-cd ..
-javac -d out src/*.java
-jar cvf luajava.jar -C out .
+函数 说明
+java.import("类名") 导入 Java 类
+类:new(参数...) 调用构造方法
+对象:方法(参数...) 调用实例方法
+类.静态方法(参数...) 调用静态方法
+类.字段 / 对象.字段 读写字段
+java.createProxy({接口...}, 表) 用 Lua 表实现 Java 接口
+java.newArray("类型", 大小) 创建 Java 数组
+
+类型映射
+
+Lua Java
+integer int / Integer
+number (float) double / Double
+string String
+boolean boolean / Boolean
+userdata Object
+function LuaFunctionObj
+array userdata Java 数组
+
+已知问题
+
+方法重载解析不完美
+
+当 Java 方法有多个重载时，引擎按返回类型优先级 String > int > boolean > double > long > void > Object 尝试匹配第一个成功的。在歧义情况下可能不精确（例如 int f(int) 和 double f(double) 同时存在时），表现为报 method not found。
+
+临时方案：避免在 Java 侧设计过于复杂的重载；如需精确匹配，可用 Java 包装方法。
+
+代理对象的 print / __tostring 可能崩溃
+
+对 createProxy 创建的代理对象调用 print() 有时会导致段错误。使用 tostring(proxy) 或直接不打印代理对象可规避。
+
+线程回调不保证即时执行
+
+createProxy 的回调在新线程中执行时，Lua 状态是线程安全的（有锁），但多线程 Lua 代码的调度顺序取决于 JVM 线程调度。
+
+ARM64 用户需自行编译
+
+CI 不提供 ARM64 的 .so，Termux / Android / 树莓派用户需要本地编译。
+
+架构
+
+```
+Lua (调用 java.xxx) → lualibjava.c → JNI → Java 类
+Java (调用 doString) → jni/luajava.c → Lua C API → Lua 解释器
 ```
 
-需要：CMake 3.14+、JDK 8+、GCC/Clang。
+· Lua5.4.8/ — Lua 5.4.8 源码，仅新增 lualibjava.c 和修改 linit.c
+· jni/ — JNI 桥接代码（Java ↔ Lua C API）
+· src/ — Java 库
+· CMakeLists.txt — 编译 Lua 静态库 + JNI 动态库
 
----
+许可证
 
-兼容性
+MIT
 
-平台 状态
-Linux (x86_64) ✅
-Linux (AArch64) ✅ (Termux)
-macOS ✅ (LUA_USE_MACOSX)
-Windows ✅ (LUA_USE_WINDOWS)
+作者
 
----
-
-项目结构
-
-```
-LuaJavaNE/
-├── Lua5.4.8/              # Lua 5.4.8 源码 + lualibjava.c
-├── jni/                   # JNI 桥接 C 代码
-├── src/                   # Java 源码
-│   ├── LuaRuntime.java    # 主 API
-│   ├── LuaFunctionObj.java # 编译后的函数对象
-│   ├── LuaInvocationHandler.java # 动态代理 InvocationHandler
-│   ├── LuaJavaCallback.java # 注解绑定桥接
-│   ├── LuaJMain.java      # CLI 入口
-│   ├── LuaFunction.java   # @LuaFunction 注解
-│   ├── LuaModule.java     # @LuaModule 注解
-│   └── TestLuaJava.java   # 测试套件
-├── build/                 # CMake 构建产物
-├── CMakeLists.txt
-├── luaj.sh                # 启动脚本
-└── luajava.jar            # 编译好的 Java 库
-```
+npp-zep
 
