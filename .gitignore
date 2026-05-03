@@ -1,0 +1,9 @@
+build/
+out/
+*.class
+*.jar
+*.o
+*.so
+*.dylib
+*.dll
+.DS_Store
