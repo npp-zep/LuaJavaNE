@@ -69,48 +69,29 @@ public class LuaJMain {
         LineEditor editor = new LineEditor(System.in);
 
         while (true) {
-            String prompt = ">".repeat(nesting + 1) + " ";;
+            String prompt = (nesting > 0) ? ">> " : "> ";
             String line = editor.readLine(prompt);
             if (line == null) break;
 
-            if (line.isEmpty()) { System.out.println("Type \\q to quit."); continue; }
             line = line.trim();
             if (line.equals("\\q") || line.equals("\\quit")) break;
             if (line.equals("\\h") || line.equals("\\help")) {
-                System.out.println("Commands: \\q quit, \\h help, =expr shorthand");
+                System.out.println("Commands: \\q quit, \\h help, =expr print result");
                 continue;
             }
-            if (line.startsWith("=")) line = "return " + line.substring(1);
+            // = 前缀：打印表达式结果
+            if (line.startsWith("=")) {
+                line = "io.write(tostring(" + line.substring(1) + "), '\\n')";
+            }
             buffer.append(line).append("\n");
             nesting += countNesting(line);
             if (nesting <= 0) {
-                execChunk(buffer.toString());
+                try { L.doString(buffer.toString()); }
+                catch (RuntimeException e) { System.err.println(e.getMessage()); }
                 buffer.setLength(0); nesting = 0;
             }
         }
-        try { Runtime.getRuntime().exec(new String[]{"stty", "echo", "-raw", "<", "/dev/tty"}).waitFor(); } catch (Exception ignored) {}
         L.close();
-    }
-
-    static void execChunk(String code) {
-        code = code.replaceAll("(?m)^\s+", ""); // 去掉每行的前导空格
-        L.doString(
-            "local fn, err = load(" + quote(code) + ", '=stdin')\n" +
-            "if fn then\n" +
-            "    local ok, res = pcall(fn)\n" +
-            "    if ok then\n" +
-            "        if res ~= nil then print(res) end\n" +
-            "    else\n" +
-            "        print(debug.traceback(res, 0))\n" +
-            "    end\n" +
-            "else\n" +
-            "    print('Syntax:', err)\n" +
-            "end"
-        );
-    }
-
-    static String quote(String s) {
-        return "[===[\n" + s + (s.endsWith("\n") ? "" : "\n") + "]===]";
     }
 
     static int countNesting(String line) {
