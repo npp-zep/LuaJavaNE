@@ -20,24 +20,20 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Build C library
+      - name: Download JLine
         run: |
-          mkdir build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release
-          make -j$(nproc)
-          cd ..
+          mkdir -p lib
+          wget -q https://repo1.maven.org/maven2/org/jline/jline/3.25.1/jline-3.25.1.jar -O lib/jline.jar
 
-      - name: Build Java
-        run: |
-          mkdir out
-          javac -d out src/*.java
-          jar cvf luajava.jar -C out .
+      - name: Build
+        run: make
 
       - name: Create Release
         run: |
           gh release create ${{ github.ref_name }} \
             luajava.jar \
             build/luajava.so \
+            --title "${{ github.ref_name }}" \
             --generate-notes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
