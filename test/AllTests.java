@@ -58,11 +58,11 @@ public class AllTests extends BaseTest {
         assertEquals(2, ((Number) r[1]).intValue());
         assertEquals(3, ((Number) r[2]).intValue());
     }
-//    @Test void compileFunc() {
-//        LuaFunctionObj fn = L.compile("return function(x) return x*2 end");
-//        LuaFunctionObj d = (LuaFunctionObj) fn.call();
-//        assertEquals(42, ((Number) d.call(21)).intValue());
-//    }
+    @Test void compileFunc() {
+        LuaFunctionObj fn = L.compile("return function(x) return x*2 end");
+        LuaFunctionObj d = (LuaFunctionObj) fn.call();
+        assertEquals(42, ((Number) d.call(21)).intValue());
+    }
     @Test void staticField() {
         L.doString("Integer = java.import('java.lang.Integer'); function max() return Integer.MAX_VALUE end");
         assertEquals(2147483647, ((Number) L.callFunction("max")).intValue());
