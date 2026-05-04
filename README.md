@@ -22,6 +22,24 @@ make
 
 或者从 Releases 下载预编译版本（x86_64 和 ARM64）。
 
+### 发布版使用
+
+1. 从 [Releases](https://github.com/npp-zep/LuaJavaNE/releases) 下载 `luajava.jar` 和 `luajava.so`
+2. 放同一目录，运行：
+
+```bash
+# 启动 REPL
+java -Dluajava.library.path=./luajava.so -jar luajava.jar
+
+# 执行一行代码
+java -Dluajava.library.path=./luajava.so -jar luajava.jar -e "print(1+1)"
+
+# 执行脚本文件
+java -Dluajava.library.path=./luajava.so -jar luajava.jar script.lua
+```
+
+> ARM64 用户请下载 `luajava-arm64.so` 并重命名为 `luajava.so`。
+
 作为库使用
 
 Java 调用 Lua
