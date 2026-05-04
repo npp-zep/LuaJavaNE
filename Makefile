@@ -12,7 +12,11 @@ java:
 	@javac -cp lib/jline.jar -d out src/*.java
 
 jar: java
-	@jar cvf luajava.jar -C out . > /dev/null
+	@cd out && jar xf ../lib/jline.jar > /dev/null 2>&1
+	@echo "Main-Class: com.luajava.LuaJMain" > manifest.txt
+	@jar cvfm luajava.jar manifest.txt -C out . > /dev/null
+	@rm -rf out/META-INF/maven out/META-INF/native
+	@rm -f manifest.txt
 
 test: all
 	@java -Dluajava.library.path=$$PWD/build/luajava.so -cp out:lib/jline.jar com.luajava.TestLuaJava
