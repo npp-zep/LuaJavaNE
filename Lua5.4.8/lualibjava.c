@@ -280,8 +280,7 @@ static int java_array_index(lua_State* L) {
     int idx = (int)luaL_checkinteger(L, 2);
 
     if (idx < 0 || idx >= arr->length) {
-        lua_pushnil(L);
-        return 1;
+        return luaL_error(L, "array index out of bounds: %d (size %d)", idx, arr->length);
     }
 
     jclass arrayCls = (*env)->FindClass(env, "java/lang/reflect/Array");
@@ -512,7 +511,7 @@ static int java_class_call(lua_State* L) {
     }
     if (!ctor || (*env)->ExceptionCheck(env)) {
         (*env)->ExceptionClear(env);
-        lua_pushnil(L); lua_pushstring(L, "constructor not found"); return 2;
+        return luaL_error(L, "constructor not found");
     }
     char argTypes[16];
     for (int i=0; i<nargs; i++) argTypes[i] = get_java_type_char(L, 2+i);
@@ -840,7 +839,7 @@ static int java_import(lua_State* L) {
     jclass cls = (*env)->FindClass(env, desc);
     if (!cls || (*env)->ExceptionCheck(env)) {
         (*env)->ExceptionClear(env); free(desc);
-        lua_pushnil(L); lua_pushfstring(L, "class not found: %s", className);
+        return luaL_error(L, "class not found: %s", className);
         return 2;
     }
     free(desc);
