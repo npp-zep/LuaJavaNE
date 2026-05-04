@@ -431,7 +431,7 @@ static int method_lookup_call(lua_State* L) {
     jmethodID method = try_find_method(env, cls, ml->methodName, L, firstArgIdx, nargs, &returnType, ml->isStatic);
     if (!method) {
         if (!ml->isStatic) (*env)->DeleteLocalRef(env, cls);
-        lua_pushnil(L); lua_pushfstring(L, "method not found: %s", ml->methodName);
+        return luaL_error(L, "method not found: %s", ml->methodName);
         return 2;
     }
     char argTypes[16];
