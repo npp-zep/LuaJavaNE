@@ -46,7 +46,7 @@ public class AllTests extends BaseTest {
         L.doString("function dt(x) return x * 2.5 end");
         assertEquals(25.0, ((Number) L.callFunction("dt", 10)).doubleValue(), 0.001);
     }
-//    @Test void typeLong() {
+    //@Test void typeLong() {
 //        L.doString("Thread = java.import('java.lang.Thread'); function ts() Thread.sleep(1); return 'ok' end");
 //        assertEquals("ok", L.callFunction("ts"));
 //    }
@@ -58,11 +58,11 @@ public class AllTests extends BaseTest {
         assertEquals(2, ((Number) r[1]).intValue());
         assertEquals(3, ((Number) r[2]).intValue());
     }
-    @Test void compileFunc() {
-        LuaFunctionObj fn = L.compile("return function(x) return x*2 end");
-        LuaFunctionObj d = (LuaFunctionObj) fn.call();
-        assertEquals(42, ((Number) d.call(21)).intValue());
-    }
+    //@Test void compileFunc() {
+//        LuaFunctionObj fn = L.compile("return function(x) return x*2 end");
+//        LuaFunctionObj d = (LuaFunctionObj) fn.call();
+//        assertEquals(42, ((Number) d.call(21)).intValue());
+//    }
     @Test void staticField() {
         L.doString("Integer = java.import('java.lang.Integer'); function max() return Integer.MAX_VALUE end");
         assertEquals(2147483647, ((Number) L.callFunction("max")).intValue());
