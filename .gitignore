@@ -5,3 +5,4 @@ luajava.jar
 *.dylib
 *.dll
 .DS_Store
+err.txt
