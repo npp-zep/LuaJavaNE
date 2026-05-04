@@ -164,14 +164,14 @@ static int new_method_lookup(lua_State* L, jobject obj, const char* name, int is
 
 // ========== 类型推导辅助 ==========
 static void get_possible_arg_types(char c, char** options, int* count) {
-    static char intOptions[3][32]    = {"I","D","Ljava/lang/Object;"};
+    static char intOptions[4][32]    = {"I","D","J","Ljava/lang/Object;"};
     static char doubleOptions[2][32] = {"D","Ljava/lang/Object;"};
     static char stringOptions[2][32] = {"Ljava/lang/String;","Ljava/lang/Object;"};
     static char boolOptions[2][32]   = {"Z","Ljava/lang/Object;"};
     static char objOptions[1][32]    = {"Ljava/lang/Object;"};
     static char* optPtrs[3];
     switch (c) {
-        case 'I': optPtrs[0]=intOptions[0];optPtrs[1]=intOptions[1];optPtrs[2]=intOptions[2];*options=(char*)optPtrs;*count=3;break;
+        case 'I': optPtrs[0]=intOptions[0];optPtrs[1]=intOptions[1];optPtrs[2]=intOptions[2];optPtrs[3]=intOptions[3];*options=(char*)optPtrs;*count=4;break;
         case 'D': optPtrs[0]=doubleOptions[0];optPtrs[1]=doubleOptions[1];*options=(char*)optPtrs;*count=2;break;
         case 'S': optPtrs[0]=stringOptions[0];optPtrs[1]=stringOptions[1];*options=(char*)optPtrs;*count=2;break;
         case 'Z': optPtrs[0]=boolOptions[0];optPtrs[1]=boolOptions[1];*options=(char*)optPtrs;*count=2;break;
