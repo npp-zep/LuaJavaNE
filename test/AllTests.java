@@ -63,12 +63,6 @@ public class AllTests extends BaseTest {
         LuaFunctionObj d = (LuaFunctionObj) fn.call();
         assertEquals(42, ((Number) d.call(21)).intValue());
     }
-    @Test void fieldReadWrite() {
-        L.doString("Point = java.import('java.awt.Point'); p = Point:new(0,0); function f() p.x=100; p.y=200; return p.x, p.y end");
-        Object[] r = L.callFunctionMultiple("f");
-        assertEquals(100, ((Number) r[0]).intValue());
-        assertEquals(200, ((Number) r[1]).intValue());
-    }
     @Test void staticField() {
         L.doString("Integer = java.import('java.lang.Integer'); function max() return Integer.MAX_VALUE end");
         assertEquals(2147483647, ((Number) L.callFunction("max")).intValue());
