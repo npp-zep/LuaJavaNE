@@ -41,7 +41,7 @@ typedef struct {
 // ========== 前向声明 ==========
 static int method_lookup_call(lua_State* L);
 static int method_lookup_gc(lua_State* L);
-static int java_object_tostring(lua_State* L);
+//static int java_object_tostring(lua_State* L);
 static int java_object_index(lua_State* L);
 static int java_object_newindex(lua_State* L);
 static int java_object_gc(lua_State* L);
@@ -571,35 +571,7 @@ static int java_class_newindex(lua_State* L) {
 
 // ========== Java.Object 元方法 ==========
 static int java_object_tostring(lua_State* L) {
-    JNIEnv* env = getEnv();
-    JavaUserdata* ud = (JavaUserdata*)luaL_checkudata(L, 1, JAVAOBJECT_META);
-
-    // 尝试调用 toString
-    jclass cls = (*env)->GetObjectClass(env, ud->obj);
-    if (!cls) {
-        lua_pushstring(L, "Java.Object[?]");
-        return 1;
-    }
-
-    jmethodID toString = (*env)->GetMethodID(env, cls, "toString", "()Ljava/lang/String;");
-    if (toString && !(*env)->ExceptionCheck(env)) {
-        jstring str = (jstring)(*env)->CallObjectMethod(env, ud->obj, toString);
-        if (str && !(*env)->ExceptionCheck(env)) {
-            const char* c = (*env)->GetStringUTFChars(env, str, NULL);
-            lua_pushstring(L, c);
-            (*env)->ReleaseStringUTFChars(env, str, c);
-            (*env)->DeleteLocalRef(env, str);
-            (*env)->DeleteLocalRef(env, cls);
-            return 1;
-        }
-    }
-    (*env)->ExceptionClear(env);
-    (*env)->DeleteLocalRef(env, cls);
-
-    // Fallback：用类名
-    char* name = get_class_name_from_classobj(env, ud->cls);
-    lua_pushfstring(L, "Java.Object[%s]", name ? name : "?");
-    free(name);
+    lua_pushstring(L, "Java.Object");
     return 1;
 }
 
