@@ -3,7 +3,6 @@
 #include "com_luajava_LuaRuntime.h"
 #include "com_luajava_LuaFunctionObj.h"
 #include "com_luajava_LuaInvocationHandler.h"
-#include "com_luajava_LuaPromise.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
