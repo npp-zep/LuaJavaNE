@@ -854,55 +854,55 @@ static void create_metatables(lua_State* L) {
     lua_pop(L, 1);
 }
 
-// ========== java.promise() ==========
-// 创建一个 Promise 对象，可用于 java.await() 等待
+
+// ========== Promise 注册表（纯 C 实现） ==========
+typedef struct PromiseEntry {
+    int id;
+    lua_State* co;
+    int done;
+    struct PromiseEntry* next;
+} PromiseEntry;
+
+static PromiseEntry* promise_registry = NULL;
+static int promise_next_id = 1;
+
 static int java_promise(lua_State* L) {
-    JNIEnv* env = getEnv();
-
-    // 获取 statePtr
-    lua_pushstring(L, "luajava_stateptr");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    jlong statePtr = (jlong)lua_tointeger(L, -1);
-    lua_pop(L, 1);
-
-    // threadRef 设为 -1，等 java.await 时再设置
-    int threadRef = -1;
-
-    // 创建 LuaPromise Java 对象
-    jclass promiseCls = (*env)->FindClass(env, "com/luajava/LuaPromise");
-    jmethodID ctor = (*env)->GetMethodID(env, promiseCls, "<init>", "(JI)V");
-    jobject promise = (*env)->NewObject(env, promiseCls, ctor, statePtr, (jint)threadRef);
-    (*env)->DeleteLocalRef(env, promiseCls);
-
-    // 包装成 userdata 返回给 Lua
-    extern int new_java_object_ud(lua_State* L, jobject obj);
-    new_java_object_ud(L, promise);
-    (*env)->DeleteLocalRef(env, promise);
+    PromiseEntry* entry = (PromiseEntry*)malloc(sizeof(PromiseEntry));
+    entry->id = promise_next_id++;
+    entry->co = NULL;
+    entry->done = 0;
+    entry->next = promise_registry;
+    promise_registry = entry;
+    lua_pushinteger(L, entry->id);
     return 1;
 }
 
-// ========== java.await(promise) ==========
-// 挂起当前协程，等待 Promise 被 complete
 static int java_await(lua_State* L) {
-    JNIEnv* env = getEnv();
-
-    // 参数：JavaObject (LuaPromise)
-    JavaUserdata* ud = (JavaUserdata*)luaL_testudata(L, 1, JAVAOBJECT_META);
-    if (!ud || !ud->obj) {
-        return luaL_error(L, "java.await: expected a LuaPromise");
-    }
-
-    // 把当前协程的引用保存到注册表，并更新 Promise 的 threadRef
-    lua_pushthread(L);
-    int threadRef = luaL_ref(L, LUA_REGISTRYINDEX);
-
-    jclass cls = (*env)->GetObjectClass(env, ud->obj);
-    jfieldID refField = (*env)->GetFieldID(env, cls, "threadRef", "I");
-    (*env)->SetIntField(env, ud->obj, refField, threadRef);
-    (*env)->DeleteLocalRef(env, cls);
-
-    // 挂起当前协程
+    int id = (int)luaL_checkinteger(L, 1);
+    PromiseEntry* entry = promise_registry;
+    while (entry) { if (entry->id == id) break; entry = entry->next; }
+    if (!entry) return luaL_error(L, "promise not found: %d", id);
+    entry->co = L;
     return lua_yield(L, 0);
+}
+
+static int java_complete(lua_State* L) {
+    int id = (int)luaL_checkinteger(L, 1);
+    int nargs = lua_gettop(L) - 1;
+    PromiseEntry* entry = promise_registry;
+    while (entry) { if (entry->id == id) break; entry = entry->next; }
+    if (!entry) return luaL_error(L, "promise not found: %d", id);
+    if (entry->done) return 0;
+    if (entry->co) {
+        for (int i = 2; i <= nargs + 1; i++) {
+            lua_pushvalue(L, i);
+            lua_xmove(L, entry->co, 1);
+        }
+        int nres;
+        lua_resume(entry->co, L, nargs, &nres);
+    }
+    entry->done = 1;
+    return 0;
 }
 
 static const luaL_Reg javalib[] = {
@@ -911,6 +911,7 @@ static const luaL_Reg javalib[] = {
     {"promise",     java_promise},
     {"await",       java_await},
     {"createProxy", java_createProxy},
+    {"complete",    java_complete},
     {"newArray",    java_newArray},
     {NULL, NULL}
 };
