@@ -18,12 +18,15 @@ public class LuaJMain {
     }
 
     static void version() {
-        System.out.println("luaj - LuaJavaNE interpreter v1.0");
-        System.out.println("Lua 5.4.8 with Java interop");
-        System.out.println("Build: " + getBuildTime());
-        System.out.println("JDK: " + System.getProperty("java.version") +
-                           " (" + System.getProperty("java.vendor") + ")");
-        System.out.println("Author: npp-zep");
+        String buildTime = getBuildTime();
+        String javaVer = System.getProperty("java.version");
+        String javaVendor = System.getProperty("java.vendor");
+        String osName = System.getProperty("os.name");
+        String osArch = System.getProperty("os.arch");
+
+        System.out.println("LuaJavaNE (Lua 5.4.8, " + buildTime + ")");
+        System.out.println("[" + javaVendor + " JDK " + javaVer + " on " + osName + " " + osArch + "]");
+        System.out.println("Type \"help\", \"copyright\", \"credits\" or \"license\" for more information.");
     }
 
     static String getBuildTime() {
@@ -66,7 +69,7 @@ public class LuaJMain {
         L = new LuaRuntime();
         L.doString("java = require 'java'");
         version();
-        System.out.println("Type \\q to quit, Ctrl+C to cancel, Ctrl+D to exit.");
+        System.out.println();
         LineEditor editor = new LineEditor();
 
         while (true) {
@@ -75,13 +78,11 @@ public class LuaJMain {
             try {
                 line = editor.readLine(prompt);
             } catch (UserInterruptException e) {
-                // Ctrl+C: 取消当前输入
                 System.out.println("^C");
                 buffer.setLength(0);
                 nesting = 0;
                 continue;
             } catch (EndOfFileException e) {
-                // Ctrl+D: 退出
                 System.out.println();
                 break;
             }
@@ -89,13 +90,26 @@ public class LuaJMain {
 
             line = line.trim();
             if (line.equals("\\q") || line.equals("\\quit")) break;
-            if (line.equals("\\h") || line.equals("\\help")) {
-                System.out.println("Commands: \\q quit, \\h help, =expr print result");
+
+            if (line.equals("\\h") || line.equals("\\help") || line.equals("help")) {
+                System.out.println("Commands: \\q quit, =expr print result, help/copyright/credits/license");
                 continue;
             }
+
+            if (line.equals("\\copyright") || line.equals("copyright") ||
+                line.equals("\\credits") || line.equals("credits") ||
+                line.equals("\\license") || line.equals("license")) {
+                System.out.println("LuaJavaNE - Lua 5.4.8 + Java interop");
+                System.out.println("Copyright (c) 2026 npp-zep");
+                System.out.println("MIT License. See LICENSE file for details.");
+                System.out.println("Third-party: Lua 5.4.8 (MIT), JLine 3 (BSD-3), JUnit 5 (EPL-1.0)");
+                continue;
+            }
+
             if (line.startsWith("=")) {
                 line = "io.write(tostring(" + line.substring(1) + "), '\\n'); io.flush()";
             }
+
             buffer.append(line).append("\n");
             nesting += countNesting(line);
             if (nesting <= 0) {
