@@ -3,6 +3,7 @@
 #include "com_luajava_LuaRuntime.h"
 #include "com_luajava_LuaFunctionObj.h"
 #include "com_luajava_LuaInvocationHandler.h"
+#include "com_luajava_LuaPromise.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -716,4 +717,86 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1registerCallback
 
     (*env)->ReleaseStringUTFChars(env, luaName, name);
     LUA_UNLOCK();
+}
+// ========== LuaPromise.complete ==========
+JNIEXPORT void JNICALL Java_com_luajava_LuaPromise_complete
+  (JNIEnv* env, jobject obj, jobject result) {
+    jclass cls = (*env)->GetObjectClass(env, obj);
+    jfieldID stateField = (*env)->GetFieldID(env, cls, "statePtr", "J");
+    jfieldID refField   = (*env)->GetFieldID(env, cls, "threadRef", "I");
+    jfieldID doneField  = (*env)->GetFieldID(env, cls, "done", "Z");
+    jlong Lptr = (*env)->GetLongField(env, obj, stateField);
+    jint ref   = (*env)->GetIntField(env, obj, refField);
+    (*env)->DeleteLocalRef(env, cls);
+
+    if (ref < 0) return;  // 还没有 await
+
+    lua_State* L = (lua_State*)(uintptr_t)Lptr;
+
+    // LUA_LOCK();
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    lua_State* co = lua_tothread(L, -1);
+    lua_pop(L, 1);
+
+    if (!co) {
+        // LUA_UNLOCK();
+        return;
+    }
+
+    push_java_arg(co, env, result);
+    int nres;
+    int ret = lua_resume(co, L, 1, &nres);
+
+    if (ret != LUA_OK && nres != LUA_YIELD) {
+        const char* msg = lua_tostring(co, -1);
+        fprintf(stderr, "LuaPromise.complete error: %s\n", msg ? msg : "unknown");
+        lua_pop(co, 1);
+    }
+
+    (*env)->SetBooleanField(env, obj, doneField, JNI_TRUE);
+    luaL_unref(L, LUA_REGISTRYINDEX, ref);
+    // LUA_UNLOCK();
+}
+
+// ========== LuaPromise.resumeExceptionally ==========
+JNIEXPORT void JNICALL Java_com_luajava_LuaPromise_resumeExceptionally
+  (JNIEnv* env, jobject obj, jstring error) {
+    jclass cls = (*env)->GetObjectClass(env, obj);
+    jfieldID stateField = (*env)->GetFieldID(env, cls, "statePtr", "J");
+    jfieldID refField   = (*env)->GetFieldID(env, cls, "threadRef", "I");
+    jfieldID doneField  = (*env)->GetFieldID(env, cls, "done", "Z");
+    jlong Lptr = (*env)->GetLongField(env, obj, stateField);
+    jint ref   = (*env)->GetIntField(env, obj, refField);
+    (*env)->DeleteLocalRef(env, cls);
+
+    if (ref < 0) return;
+
+    lua_State* L = (lua_State*)(uintptr_t)Lptr;
+
+    // LUA_LOCK();
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    lua_State* co = lua_tothread(L, -1);
+    lua_pop(L, 1);
+
+    if (!co) {
+        // LUA_UNLOCK();
+        return;
+    }
+
+    const char* msg = (*env)->GetStringUTFChars(env, error, NULL);
+    lua_pushstring(co, msg);
+    (*env)->ReleaseStringUTFChars(env, error, msg);
+
+    int nres;
+    int ret2 = lua_resume(co, L, 1, &nres);
+
+    if (ret2 != LUA_OK && nres != LUA_YIELD) {
+        const char* err = lua_tostring(co, -1);
+        fprintf(stderr, "LuaPromise.resumeExceptionally error: %s\n", err ? err : "unknown");
+        lua_pop(co, 1);
+    }
+
+    (*env)->SetBooleanField(env, obj, doneField, JNI_TRUE);
+    luaL_unref(L, LUA_REGISTRYINDEX, ref);
+    // LUA_UNLOCK();
 }

@@ -854,9 +854,62 @@ static void create_metatables(lua_State* L) {
     lua_pop(L, 1);
 }
 
+// ========== java.promise() ==========
+// 创建一个 Promise 对象，可用于 java.await() 等待
+static int java_promise(lua_State* L) {
+    JNIEnv* env = getEnv();
+
+    // 获取 statePtr
+    lua_pushstring(L, "luajava_stateptr");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    jlong statePtr = (jlong)lua_tointeger(L, -1);
+    lua_pop(L, 1);
+
+    // threadRef 设为 -1，等 java.await 时再设置
+    int threadRef = -1;
+
+    // 创建 LuaPromise Java 对象
+    jclass promiseCls = (*env)->FindClass(env, "com/luajava/LuaPromise");
+    jmethodID ctor = (*env)->GetMethodID(env, promiseCls, "<init>", "(JI)V");
+    jobject promise = (*env)->NewObject(env, promiseCls, ctor, statePtr, (jint)threadRef);
+    (*env)->DeleteLocalRef(env, promiseCls);
+
+    // 包装成 userdata 返回给 Lua
+    extern int new_java_object_ud(lua_State* L, jobject obj);
+    new_java_object_ud(L, promise);
+    (*env)->DeleteLocalRef(env, promise);
+    return 1;
+}
+
+// ========== java.await(promise) ==========
+// 挂起当前协程，等待 Promise 被 complete
+static int java_await(lua_State* L) {
+    JNIEnv* env = getEnv();
+
+    // 参数：JavaObject (LuaPromise)
+    JavaUserdata* ud = (JavaUserdata*)luaL_testudata(L, 1, JAVAOBJECT_META);
+    if (!ud || !ud->obj) {
+        return luaL_error(L, "java.await: expected a LuaPromise");
+    }
+
+    // 把当前协程的引用保存到注册表，并更新 Promise 的 threadRef
+    lua_pushthread(L);
+    int threadRef = luaL_ref(L, LUA_REGISTRYINDEX);
+
+    jclass cls = (*env)->GetObjectClass(env, ud->obj);
+    jfieldID refField = (*env)->GetFieldID(env, cls, "threadRef", "I");
+    (*env)->SetIntField(env, ud->obj, refField, threadRef);
+    (*env)->DeleteLocalRef(env, cls);
+
+    // 挂起当前协程
+    return lua_yield(L, 0);
+}
+
 static const luaL_Reg javalib[] = {
     {"import",      java_import},
     {"toString",    java_toString},
+    {"promise",     java_promise},
+    {"await",       java_await},
     {"createProxy", java_createProxy},
     {"newArray",    java_newArray},
     {NULL, NULL}
