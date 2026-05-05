@@ -230,6 +230,7 @@ make
 ARM64 (Termux / Android / 树莓派): 编译步骤相同，或从 Releases 下载预编译的 luajava-arm64.so。
 
 已知限制
+- `compile()` 方法在 x86_64 Linux 上可能崩溃（SIGSEGV），ARM64 正常。
 
 · 方法重载解析按返回类型优先级（String > int > boolean > double > long > void > Object）尝试，复杂重载可能匹配不精确
 · 代理对象直接 print() 可能段错误，用 tostring(proxy) 替代
