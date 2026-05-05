@@ -730,6 +730,8 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaPromise_complete
     (*env)->DeleteLocalRef(env, cls);
 
     if (ref < 0) return;  // 还没有 await
+    jboolean alreadyDone = (*env)->GetBooleanField(env, obj, doneField);
+    if (alreadyDone) return;  // 已经 complete 过了
 
     lua_State* L = (lua_State*)(uintptr_t)Lptr;
 
@@ -747,7 +749,7 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaPromise_complete
     int nres;
     int ret = lua_resume(co, L, 1, &nres);
 
-    if (ret != LUA_OK && nres != LUA_YIELD) {
+    if (ret != LUA_OK && ret != LUA_YIELD) {
         const char* msg = lua_tostring(co, -1);
         fprintf(stderr, "LuaPromise.complete error: %s\n", msg ? msg : "unknown");
         lua_pop(co, 1);
@@ -770,6 +772,8 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaPromise_resumeExceptionally
     (*env)->DeleteLocalRef(env, cls);
 
     if (ref < 0) return;
+    jboolean alreadyDone = (*env)->GetBooleanField(env, obj, doneField);
+    if (alreadyDone) return;  // 已经 complete 过了
 
     lua_State* L = (lua_State*)(uintptr_t)Lptr;
 
