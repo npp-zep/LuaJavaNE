@@ -13,5 +13,6 @@ void throwLuaError(JNIEnv* env, lua_State* L, int errCode);
 jobject lua_to_java_object(lua_State* L, JNIEnv* env, int idx);
 void push_java_arg(lua_State* L, JNIEnv* env, jobject arg);
 int new_java_object_ud(lua_State* L, jobject obj);
+extern pthread_mutex_t lua_mutex;
 
 #endif

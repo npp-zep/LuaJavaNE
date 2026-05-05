@@ -8,6 +8,7 @@
 #include <stdio.h>
 
 extern JNIEnv* getEnv();
+extern int java_runAsync(lua_State* L);
 
 typedef struct {
     jobject obj;
@@ -672,6 +673,7 @@ static int java_createProxy(lua_State* L) {
     }
 
     // 保存 Lua 表到注册表
+    fprintf(stderr, "await: after yield, top=%d\n", lua_gettop(L));
     lua_pushvalue(L, 2);
     int tableRef = luaL_ref(L, LUA_REGISTRYINDEX);
 
@@ -863,8 +865,8 @@ typedef struct PromiseEntry {
     struct PromiseEntry* next;
 } PromiseEntry;
 
-static PromiseEntry* promise_registry = NULL;
-static int promise_next_id = 1;
+PromiseEntry* promise_registry = NULL;
+int promise_next_id = 1;
 
 static int java_promise(lua_State* L) {
     PromiseEntry* entry = (PromiseEntry*)malloc(sizeof(PromiseEntry));
@@ -883,7 +885,12 @@ static int java_await(lua_State* L) {
     while (entry) { if (entry->id == id) break; entry = entry->next; }
     if (!entry) return luaL_error(L, "promise not found: %d", id);
     entry->co = L;
-    return lua_yield(L, 0);
+    entry->co = L;
+    lua_yield(L, 0);
+    fprintf(stderr, "await: after yield, top=%d\n", lua_gettop(L));
+    lua_pushvalue(L, -1);
+    lua_settop(L, 1);
+    return 1;
 }
 
 static int java_complete(lua_State* L) {
@@ -895,6 +902,7 @@ static int java_complete(lua_State* L) {
     if (entry->done) return 0;
     if (entry->co) {
         for (int i = 2; i <= nargs + 1; i++) {
+    fprintf(stderr, "await: after yield, top=%d\n", lua_gettop(L));
             lua_pushvalue(L, i);
             lua_xmove(L, entry->co, 1);
         }
@@ -912,6 +920,7 @@ static const luaL_Reg javalib[] = {
     {"await",       java_await},
     {"createProxy", java_createProxy},
     {"complete",    java_complete},
+    {"runAsync",    java_runAsync},
     {"newArray",    java_newArray},
     {NULL, NULL}
 };

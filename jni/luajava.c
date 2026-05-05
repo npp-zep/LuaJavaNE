@@ -8,8 +8,8 @@
 #include <string.h>
 #include <pthread.h>
 
-static JavaVM* g_jvm = NULL;
-static pthread_mutex_t lua_mutex = PTHREAD_MUTEX_INITIALIZER;
+JavaVM* g_jvm = NULL;
+pthread_mutex_t lua_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 #define LUA_LOCK()   pthread_mutex_lock(&lua_mutex)
 #define LUA_UNLOCK() pthread_mutex_unlock(&lua_mutex)

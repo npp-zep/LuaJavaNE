@@ -1,0 +1,8 @@
+local id = java.promise()
+local co = coroutine.create(function()
+    local r = java.await(id)
+    print('result:', r)
+end)
+coroutine.resume(co)
+java.complete(id, 'locked ok')
+print('done')
