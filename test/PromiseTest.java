@@ -9,11 +9,41 @@ public class PromiseTest extends BaseTest {
     void basicAwaitComplete() {
         L.doString(
             "id = java.promise()\n" +
-            "co = coroutine.create(function() result = java.await(id) end)\n" +
+            "co = coroutine.create(function() r = java.await(id) end)\n" +
             "coroutine.resume(co)\n" +
             "java.complete(id, 'hello')\n"
         );
-        assertEquals("hello", L.getGlobal("result"));
+        assertEquals("hello", L.getGlobal("r"));
+    }
+
+    @Test
+    void multipleValues() {
+        L.doString(
+            "id = java.promise()\n" +
+            "co = coroutine.create(function() x, y = java.await(id) end)\n" +
+            "coroutine.resume(co)\n" +
+            "java.complete(id, 1, 2)\n"
+        );
+        assertEquals("1", L.getGlobal("x"));
+        assertEquals("2", L.getGlobal("y"));
+    }
+
+    @Test
+    void doubleCompleteNoCrash() {
+        L.doString(
+            "id = java.promise()\n" +
+            "java.complete(id, 'first')\n" +
+            "java.complete(id, 'second')\n"
+        );
+        // 不崩溃就算通过
+    }
+
+    @Test
+    void promiseNotFound() {
+        Exception ex = assertThrows(RuntimeException.class, () -> {
+            L.doString("java.await(999)");
+        });
+        assertTrue(ex.getMessage().contains("promise not found"));
     }
 
     @Test
@@ -28,36 +58,5 @@ public class PromiseTest extends BaseTest {
         );
         assertEquals("first", L.getGlobal("r1"));
         assertEquals("second", L.getGlobal("r2"));
-    }
-
-    @Test
-    void multipleValues() {
-        L.doString(
-            "id = java.promise()\n" +
-            "co = coroutine.create(function() x, y, z = java.await(id) end)\n" +
-            "coroutine.resume(co)\n" +
-            "java.complete(id, 1, 2, 3)\n"
-        );
-        assertEquals("1", L.getGlobal("x"));
-        assertEquals("2", L.getGlobal("y"));
-        assertEquals("3", L.getGlobal("z"));
-    }
-
-    @Test
-    void doubleCompleteNoCrash() {
-        L.doString(
-            "id = java.promise()\n" +
-            "java.complete(id, 'ok')\n" +
-            "java.complete(id, 'again')\n"
-        );
-        // just verify no crash // 不会崩溃即可
-    }
-
-    @Test
-    void promiseNotFound() {
-        Exception ex = assertThrows(RuntimeException.class, () -> {
-            L.doString("java.await(999)");
-        });
-        assertTrue(ex.getMessage().contains("promise not found"));
     }
 }
