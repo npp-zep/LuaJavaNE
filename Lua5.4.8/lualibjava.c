@@ -909,8 +909,10 @@ static int java_complete(lua_State* L) {
 // ========== 跨语言全局存储 ==========
 typedef struct StoreEntry {
     char* key;
-    lua_Integer type;
+    int type;
     lua_Number numVal;
+    lua_Integer intVal;
+    int isInteger;
     char* strVal;
     int boolVal;
     struct StoreEntry* next;
@@ -927,7 +929,15 @@ static int java_store(lua_State* L) {
             int t = lua_type(L, 2);
             e->type = t;
             switch (t) {
-                case LUA_TNUMBER: e->numVal = lua_tonumber(L, 2); break;
+                case LUA_TNUMBER:
+                    if (lua_isinteger(L, 2)) {
+                        e->intVal = lua_tointeger(L, 2);
+                        e->isInteger = 1;
+                    } else {
+                        e->numVal = lua_tonumber(L, 2);
+                        e->isInteger = 0;
+                    }
+                    break;
                 case LUA_TSTRING: e->strVal = strdup(lua_tostring(L, 2)); break;
                 case LUA_TBOOLEAN: e->boolVal = lua_toboolean(L, 2); break;
                 default: e->type = LUA_TNIL; break;
@@ -942,7 +952,15 @@ static int java_store(lua_State* L) {
     int t = lua_type(L, 2);
     e->type = t;
     switch (t) {
-        case LUA_TNUMBER: e->numVal = lua_tonumber(L, 2); break;
+        case LUA_TNUMBER:
+            if (lua_isinteger(L, 2)) {
+                e->intVal = lua_tointeger(L, 2);
+                e->isInteger = 1;
+            } else {
+                e->numVal = lua_tonumber(L, 2);
+                e->isInteger = 0;
+            }
+            break;
         case LUA_TSTRING: e->strVal = strdup(lua_tostring(L, 2)); break;
         case LUA_TBOOLEAN: e->boolVal = lua_toboolean(L, 2); break;
         default: e->type = LUA_TNIL; break;
@@ -951,18 +969,26 @@ static int java_store(lua_State* L) {
     store_registry = e;
     return 0;
 }
+
 static int java_fetch(lua_State* L) {
     const char* key = luaL_checkstring(L, 1);
     StoreEntry* e = store_registry;
-    while (e) { if (strcmp(e->key, key) == 0) break; e = e->next; }
-    if (!e) { lua_pushnil(L); return 1; }
-    switch (e->type) {
-        case LUA_TNUMBER: lua_pushnumber(L, e->numVal); break;
-        case LUA_TSTRING: lua_pushstring(L, e->strVal); break;
-        case LUA_TBOOLEAN: lua_pushboolean(L, e->boolVal); break;
-        default: lua_pushnil(L); break;
+    while (e) {
+        if (strcmp(e->key, key) == 0) {
+            switch (e->type) {
+                case LUA_TNUMBER:
+                    if (e->isInteger) lua_pushinteger(L, e->intVal);
+                    else lua_pushnumber(L, e->numVal);
+                    break;
+                case LUA_TSTRING: lua_pushstring(L, e->strVal); break;
+                case LUA_TBOOLEAN: lua_pushboolean(L, e->boolVal); break;
+                default: lua_pushnil(L); break;
+            }
+            return 1;
+        }
+        e = e->next;
     }
-    return 1;
+    lua_pushnil(L); return 1;
 }
 
 static int java_deleteStore(lua_State* L) {
