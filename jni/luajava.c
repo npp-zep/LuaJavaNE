@@ -803,3 +803,68 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaPromise_resumeExceptionally
     luaL_unref(L, LUA_REGISTRYINDEX, ref);
     // LUA_UNLOCK();
 }
+
+// ========== LuaRuntime.store ==========
+JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime_store
+  (JNIEnv* env, jobject obj, jstring key, jobject value) {
+    jclass cls = (*env)->GetObjectClass(env, obj);
+    jfieldID f = (*env)->GetFieldID(env, cls, "statePtr", "J");
+    jlong Lptr = (*env)->GetLongField(env, obj, f);
+    (*env)->DeleteLocalRef(env, cls);
+
+    lua_State* L = (lua_State*)(uintptr_t)Lptr;
+    const char* ckey = (*env)->GetStringUTFChars(env, key, NULL);
+
+    // 把 Java 值转换为 Lua 值，然后调 lua_gc 的 store
+    push_java_arg(L, env, value);  // 值入栈
+    lua_getglobal(L, "java");
+    lua_getfield(L, -1, "store");
+    lua_pushstring(L, ckey);
+    lua_pushvalue(L, 1);  // 值
+    lua_call(L, 2, 0);
+    lua_pop(L, 2);  // 清理 java 表和函数
+
+    (*env)->ReleaseStringUTFChars(env, key, ckey);
+}
+
+// ========== LuaRuntime.fetch ==========
+JNIEXPORT jobject JNICALL Java_com_luajava_LuaRuntime_fetch
+  (JNIEnv* env, jobject obj, jstring key) {
+    jclass cls = (*env)->GetObjectClass(env, obj);
+    jfieldID f = (*env)->GetFieldID(env, cls, "statePtr", "J");
+    jlong Lptr = (*env)->GetLongField(env, obj, f);
+    (*env)->DeleteLocalRef(env, cls);
+
+    lua_State* L = (lua_State*)(uintptr_t)Lptr;
+    const char* ckey = (*env)->GetStringUTFChars(env, key, NULL);
+
+    lua_getglobal(L, "java");
+    lua_getfield(L, -1, "fetch");
+    lua_pushstring(L, ckey);
+    lua_call(L, 1, 1);
+    jobject result = lua_to_java_object(L, env, -1);
+    lua_pop(L, 2);
+
+    (*env)->ReleaseStringUTFChars(env, key, ckey);
+    return result;
+}
+
+// ========== LuaRuntime.deleteStore ==========
+JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime_deleteStore
+  (JNIEnv* env, jobject obj, jstring key) {
+    jclass cls = (*env)->GetObjectClass(env, obj);
+    jfieldID f = (*env)->GetFieldID(env, cls, "statePtr", "J");
+    jlong Lptr = (*env)->GetLongField(env, obj, f);
+    (*env)->DeleteLocalRef(env, cls);
+
+    lua_State* L = (lua_State*)(uintptr_t)Lptr;
+    const char* ckey = (*env)->GetStringUTFChars(env, key, NULL);
+
+    lua_getglobal(L, "java");
+    lua_getfield(L, -1, "deleteStore");
+    lua_pushstring(L, ckey);
+    lua_call(L, 1, 0);
+    lua_pop(L, 1);
+
+    (*env)->ReleaseStringUTFChars(env, key, ckey);
+}

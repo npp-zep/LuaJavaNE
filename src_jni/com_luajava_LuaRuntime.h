@@ -87,6 +87,30 @@ JNIEXPORT jint JNICALL Java_com_luajava_LuaRuntime__1compile
 JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1doFile
   (JNIEnv *, jobject, jlong, jstring);
 
+/*
+ * Class:     com_luajava_LuaRuntime
+ * Method:    store
+ * Signature: (Ljava/lang/String;Ljava/lang/Object;)V
+ */
+JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime_store
+  (JNIEnv *, jobject, jstring, jobject);
+
+/*
+ * Class:     com_luajava_LuaRuntime
+ * Method:    fetch
+ * Signature: (Ljava/lang/String;)Ljava/lang/Object;
+ */
+JNIEXPORT jobject JNICALL Java_com_luajava_LuaRuntime_fetch
+  (JNIEnv *, jobject, jstring);
+
+/*
+ * Class:     com_luajava_LuaRuntime
+ * Method:    deleteStore
+ * Signature: (Ljava/lang/String;)V
+ */
+JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime_deleteStore
+  (JNIEnv *, jobject, jstring);
+
 #ifdef __cplusplus
 }
 #endif

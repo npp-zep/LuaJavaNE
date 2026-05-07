@@ -135,4 +135,13 @@ public class LuaRuntime {
     private native String _getGlobal(long L, String name);
     private native int _compile(long L, String code);
     private native void _doFile(long L, String path);
+
+    /** 在 C 端存储一个值（跨语言共享） */
+    public native void store(String key, Object value);
+
+    /** 从 C 端读取一个值 */
+    public native Object fetch(String key);
+
+    /** 从 C 端删除一个值 */
+    public native void deleteStore(String key);
 }
