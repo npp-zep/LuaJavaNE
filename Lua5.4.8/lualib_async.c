@@ -32,6 +32,7 @@ static void* run_async_thread(void* arg) {
     JNIEnv* env = NULL;
     (*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL);
 
+    // 等待主线程释放锁（yield 后 unlock）
     pthread_mutex_lock(&lua_mutex);
 
     lua_rawgeti(mainL, LUA_REGISTRYINDEX, task->funcRef);
@@ -46,9 +47,8 @@ static void* run_async_thread(void* arg) {
 
         if (entry && entry->co) {
             int nres;
-            lua_pushstring(entry->co, "hello from async");
-            fprintf(stderr, "resume: co=%p, type=%s\n", (void*)entry->co, lua_typename(mainL, lua_type(mainL, -1)));
-            int ret = lua_resume(entry->co, NULL, 0, &nres); fprintf(stderr, "resume ret=%d, nres=%d\n", ret, nres);
+            // 从 mainL 栈顶取函数返回值传给协程
+            lua_resume(entry->co, mainL, 1, &nres);
         }
         if (entry) entry->done = 1;
         lua_pop(mainL, 1);

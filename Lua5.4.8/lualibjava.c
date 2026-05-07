@@ -673,7 +673,6 @@ static int java_createProxy(lua_State* L) {
     }
 
     // 保存 Lua 表到注册表
-    fprintf(stderr, "await: after yield, top=%d\n", lua_gettop(L));
     lua_pushvalue(L, 2);
     int tableRef = luaL_ref(L, LUA_REGISTRYINDEX);
 
@@ -885,11 +884,7 @@ static int java_await(lua_State* L) {
     while (entry) { if (entry->id == id) break; entry = entry->next; }
     if (!entry) return luaL_error(L, "promise not found: %d", id);
     entry->co = L;
-    entry->co = L;
     lua_yield(L, 0);
-    fprintf(stderr, "await: after yield, top=%d\n", lua_gettop(L));
-    lua_pushvalue(L, -1);
-    lua_settop(L, 1);
     return 1;
 }
 
@@ -902,7 +897,6 @@ static int java_complete(lua_State* L) {
     if (entry->done) return 0;
     if (entry->co) {
         for (int i = 2; i <= nargs + 1; i++) {
-    fprintf(stderr, "await: after yield, top=%d\n", lua_gettop(L));
             lua_pushvalue(L, i);
             lua_xmove(L, entry->co, 1);
         }
