@@ -32,13 +32,15 @@ static void* run_async_thread(void* arg) {
     JNIEnv* env = NULL;
     (*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL);
 
-    // 等待主线程释放锁（yield 后 unlock）
-    pthread_mutex_lock(&lua_mutex);
-
+    lua_settop(mainL, 0);
     lua_rawgeti(mainL, LUA_REGISTRYINDEX, task->funcRef);
     int err = lua_pcall(mainL, 0, 1, 0);
 
     if (err == LUA_OK) {
+        const char* val = lua_tostring(mainL, -1);
+        if (!val) val = "";
+        lua_pop(mainL, 1);
+
         PromiseEntry* entry = promise_registry;
         while (entry) {
             if (entry->id == task->promiseId) break;
@@ -46,17 +48,14 @@ static void* run_async_thread(void* arg) {
         }
 
         if (entry && entry->co) {
+            lua_pushstring(entry->co, val);
             int nres;
-            // 从 mainL 栈顶取函数返回值传给协程
-            lua_resume(entry->co, mainL, 1, &nres);
+            lua_resume(entry->co, NULL, 0, &nres);
         }
         if (entry) entry->done = 1;
-        lua_pop(mainL, 1);
     }
 
     luaL_unref(mainL, LUA_REGISTRYINDEX, task->funcRef);
-    pthread_mutex_unlock(&lua_mutex);
-    free(task);
     return NULL;
 }
 
