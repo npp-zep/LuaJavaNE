@@ -34,6 +34,7 @@ LUAMOD_API int (luaopen_string) (lua_State *L);
 
 #define LUA_UTF8LIBNAME	"utf8"
 LUAMOD_API int (luaopen_utf8) (lua_State *L);
+LUAMOD_API int (luaopen_clac) (lua_State *L);
 
 #define LUA_MATHLIBNAME	"math"
 LUAMOD_API int (luaopen_math) (lua_State *L);

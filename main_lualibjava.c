@@ -8,8 +8,6 @@
 #include <stdio.h>
 
 extern JNIEnv* getEnv();
-extern int java_runAsync(lua_State* L);
-extern int java_checkPromise(lua_State* L);
 
 typedef struct {
     jobject obj;
@@ -865,8 +863,8 @@ typedef struct PromiseEntry {
     struct PromiseEntry* next;
 } PromiseEntry;
 
-PromiseEntry* promise_registry = NULL;
-int promise_next_id = 1;
+static PromiseEntry* promise_registry = NULL;
+static int promise_next_id = 1;
 
 static int java_promise(lua_State* L) {
     PromiseEntry* entry = (PromiseEntry*)malloc(sizeof(PromiseEntry));
@@ -886,12 +884,6 @@ static int java_await(lua_State* L) {
     if (!entry) return luaL_error(L, "promise not found: %d", id);
     entry->co = L;
     return lua_yield(L, 0);
-}
-static int java_agent_exec(lua_State* L) {
-    int funcRef = (int)luaL_checkinteger(L, 1);
-    lua_rawgeti(L, LUA_REGISTRYINDEX, funcRef);
-    lua_call(L, 0, 1);
-    return 0;
 }
 
 static int java_complete(lua_State* L) {
@@ -913,110 +905,6 @@ static int java_complete(lua_State* L) {
     return 0;
 }
 
-
-// ========== 跨语言全局存储 ==========
-typedef struct StoreEntry {
-    char* key;
-    int type;
-    lua_Number numVal;
-    lua_Integer intVal;
-    int isInteger;
-    char* strVal;
-    int boolVal;
-    struct StoreEntry* next;
-} StoreEntry;
-
-static StoreEntry* store_registry = NULL;
-
-static int java_store(lua_State* L) {
-    const char* key = luaL_checkstring(L, 1);
-    StoreEntry* e = store_registry;
-    while (e) {
-        if (strcmp(e->key, key) == 0) {
-            if (e->strVal) { free(e->strVal); e->strVal = NULL; }
-            int t = lua_type(L, 2);
-            e->type = t;
-            switch (t) {
-                case LUA_TNUMBER:
-                    if (lua_isinteger(L, 2)) {
-                        e->intVal = lua_tointeger(L, 2);
-                        e->isInteger = 1;
-                    } else {
-                        e->numVal = lua_tonumber(L, 2);
-                        e->isInteger = 0;
-                    }
-                    break;
-                case LUA_TSTRING: e->strVal = strdup(lua_tostring(L, 2)); break;
-                case LUA_TBOOLEAN: e->boolVal = lua_toboolean(L, 2); break;
-                default: e->type = LUA_TNIL; break;
-            }
-            return 0;
-        }
-        e = e->next;
-    }
-    e = (StoreEntry*)malloc(sizeof(StoreEntry));
-    e->key = strdup(key);
-    e->strVal = NULL;
-    int t = lua_type(L, 2);
-    e->type = t;
-    switch (t) {
-        case LUA_TNUMBER:
-            if (lua_isinteger(L, 2)) {
-                e->intVal = lua_tointeger(L, 2);
-                e->isInteger = 1;
-            } else {
-                e->numVal = lua_tonumber(L, 2);
-                e->isInteger = 0;
-            }
-            break;
-        case LUA_TSTRING: e->strVal = strdup(lua_tostring(L, 2)); break;
-        case LUA_TBOOLEAN: e->boolVal = lua_toboolean(L, 2); break;
-        default: e->type = LUA_TNIL; break;
-    }
-    e->next = store_registry;
-    store_registry = e;
-    return 0;
-}
-
-static int java_fetch(lua_State* L) {
-    const char* key = luaL_checkstring(L, 1);
-    StoreEntry* e = store_registry;
-    while (e) {
-        if (strcmp(e->key, key) == 0) {
-            switch (e->type) {
-                case LUA_TNUMBER:
-                    if (e->isInteger) lua_pushinteger(L, e->intVal);
-                    else lua_pushnumber(L, e->numVal);
-                    break;
-                case LUA_TSTRING: lua_pushstring(L, e->strVal); break;
-                case LUA_TBOOLEAN: lua_pushboolean(L, e->boolVal); break;
-                default: lua_pushnil(L); break;
-            }
-            return 1;
-        }
-        e = e->next;
-    }
-    lua_pushnil(L); return 1;
-}
-
-static int java_deleteStore(lua_State* L) {
-    const char* key = luaL_checkstring(L, 1);
-    StoreEntry* prev = NULL;
-    StoreEntry* e = store_registry;
-    while (e) {
-        if (strcmp(e->key, key) == 0) {
-            if (prev) prev->next = e->next;
-            else store_registry = e->next;
-            free(e->key);
-            if (e->strVal) free(e->strVal);
-            free(e);
-            break;
-        }
-        prev = e;
-        e = e->next;
-    }
-    return 0;
-}
 static const luaL_Reg javalib[] = {
     {"import",      java_import},
     {"toString",    java_toString},
@@ -1025,12 +913,6 @@ static const luaL_Reg javalib[] = {
     {"createProxy", java_createProxy},
     {"complete",    java_complete},
     {"newArray",    java_newArray},
-    {"store",       java_store},
-    {"fetch",       java_fetch},
-    {"deleteStore", java_deleteStore},
-    {"__agent_exec", java_agent_exec},
-    {"runAsync",    java_runAsync},
-    {"checkPromise", java_checkPromise},
     {NULL, NULL}
 };
 

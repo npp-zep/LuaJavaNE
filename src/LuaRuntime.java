@@ -62,8 +62,10 @@ public class LuaRuntime {
     // ========== 实例成员 ==========
 
     long statePtr;
+    LuaAgent agent;
 
     public LuaRuntime() {
+        agent = new LuaAgent();
         statePtr = _newState();
     }
 
@@ -72,9 +74,19 @@ public class LuaRuntime {
     public void doString(String script) {
         _doString(statePtr, script);
     }
+    /** 主线程轮询：消费完成队列，唤醒等待的协程 */
+    public void poll() {
+        agent.poll(this);
+    }
+
+    /** 提交异步任务到 Agent 线程池 */
+    public void submitTask(int promiseId, int funcRef) {
+        agent.submitTask(this, promiseId, funcRef);
+    }
 
     public void close() {
         if (statePtr != 0) {
+        agent.shutdown();
             _close(statePtr);
             statePtr = 0;
         }

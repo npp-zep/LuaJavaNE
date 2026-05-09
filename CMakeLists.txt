@@ -38,6 +38,8 @@ file(GLOB LUA_CORE_SRCS
     "${LUA_DIR}/lvm.c"
     "${LUA_DIR}/lzio.c"
     "${LUA_DIR}/lualibjava.c"  # 新增的 java 库
+    "${LUA_DIR}/lualib_async.c"  # runAsync
+    "${LUA_DIR}/lualib_clac.c"
 )
 
 add_library(lua STATIC ${LUA_CORE_SRCS})
