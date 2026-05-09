@@ -1,13 +1,23 @@
 package com.luajava;
-
 import java.lang.reflect.Method;
 
 public class AsyncRunner {
+    /** 供 benchmark 用的计算任务 */
+    public static String heavyCalc(String countStr) {
+        int n = Integer.parseInt(countStr);
+        double sum = 0;
+        for (int i = 0; i < n; i++) {
+            for (int j = 1; j <= 100; j++) {
+                sum += Math.sin(j) * Math.cos(j);
+            }
+        }
+        return String.valueOf(sum);
+    }
+
     /** 工作线程调用：执行静态方法，自动匹配参数类型，返回字符串 */
     public static String runStatic(String className, String methodName, String[] args) throws Exception {
         Class<?> cls = Class.forName(className);
         
-        // 1. 找同名方法，尝试参数自动转换
         Method matched = null;
         Object[] converted = null;
         for (Method m : cls.getMethods()) {
@@ -36,10 +46,7 @@ public class AsyncRunner {
             return "E:no matching method: " + methodName;
         }
         
-        // 2. 执行
         Object result = matched.invoke(null, converted);
-        
-        // 3. 序列化返回值
         return "S:" + (result != null ? result.toString() : "nil");
     }
     
