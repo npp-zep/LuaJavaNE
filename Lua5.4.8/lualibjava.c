@@ -1,3 +1,4 @@
+#include "lualibjava_internal.h"
 // Lua5.4.8/lualibjava.c
 #include "lua.h"
 #include "lauxlib.h"
@@ -857,18 +858,12 @@ static void create_metatables(lua_State* L) {
 }
 
 
-// ========== Promise 注册表（纯 C 实现） ==========
-typedef struct PromiseEntry {
-    int id;
-    lua_State* co;
-    int done;
-    struct PromiseEntry* next;
-} PromiseEntry;
-
-PromiseEntry* promise_registry = NULL;
 int promise_next_id = 1;
+PromiseEntry* promise_registry = NULL;
+
 
 static int java_promise(lua_State* L) {
+
     PromiseEntry* entry = (PromiseEntry*)malloc(sizeof(PromiseEntry));
     entry->id = promise_next_id++;
     entry->co = NULL;
