@@ -19,6 +19,8 @@ CP = $(OUT_DIR):$(JLINE_JAR):$(JUNIT_JAR)
 all: $(BUILD_DIR)/luajava.so $(OUT_DIR)
 	@echo "Building Java classes..."
 	javac -d $(OUT_DIR) -cp $(JLINE_JAR) $(SRC_DIR)/*.java
+	javac -d $(OUT_DIR) -cp $(JLINE_JAR) $(SRC_DIR)/AsyncRunner.java
+	jar uf luajava.jar -C $(OUT_DIR) com/luajava/AsyncRunner.class
 	@echo "Build complete. Run './luaj.sh' to start."
 
 # C 编译（委托给 CMake）
@@ -33,6 +35,8 @@ $(OUT_DIR):
 junit: all
 	@echo "Compiling test classes..."
 	javac -d $(OUT_DIR) -cp $(CP) $(TEST_DIR)/*.java
+	javac -d $(OUT_DIR) -cp $(JLINE_JAR) $(SRC_DIR)/AsyncRunner.java
+	jar uf luajava.jar -C $(OUT_DIR) com/luajava/AsyncRunner.class
 	@echo "Test classes compiled."
 
 # 运行 JUnit 测试

@@ -14,7 +14,8 @@ typedef struct {
     int pid;
     char* className;
     char* methodName;
-    char* arg;
+    int argCount;
+    char** args;
 } Task;
 
 static void complete(int pid, const char* s) {
@@ -30,47 +31,68 @@ static void complete(int pid, const char* s) {
     }
 }
 
+static jobjectArray build_string_array(JNIEnv* env, char** strs, int count) {
+    jclass stringCls = (*env)->FindClass(env, "java/lang/String");
+    jobjectArray arr = (*env)->NewObjectArray(env, count, stringCls, NULL);
+    for (int i = 0; i < count; i++) {
+        jstring js = (*env)->NewStringUTF(env, strs[i] ? strs[i] : "");
+        (*env)->SetObjectArrayElement(env, arr, i, js);
+        (*env)->DeleteLocalRef(env, js);
+    }
+    return arr;
+}
+
 static void* worker(void* arg) {
     Task* t = (Task*)arg;
     JNIEnv* env = NULL;
     if ((*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL) != 0) {
         complete(t->pid, "E:attach failed");
-        free(t->className); free(t->methodName); free(t);
-    free(t->arg);
-        return NULL;
+        goto cleanup;
     }
 
-    char result[512] = "X:";
-    // 替换 . 为 /
-    char* desc = strdup(t->className);
-    for (char* p = desc; *p; p++) if (*p == '.') *p = '/';
-
+    char result[1024] = "X:";
     jclass runnerCls = (*env)->FindClass(env, "com/luajava/AsyncRunner");
-    if (runnerCls) {
-        jmethodID runMid = (*env)->GetStaticMethodID(env, runnerCls, "runStatic",
-            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
-        if (runMid) {
-            jstring jcls = (*env)->NewStringUTF(env, t->className);
-            jstring jmethod = (*env)->NewStringUTF(env, t->methodName);
-            jstring jarg = (*env)->NewStringUTF(env, t->arg ? t->arg : "");
-            jstring jres = (jstring)(*env)->CallStaticObjectMethod(env, runnerCls, runMid, jcls, jmethod, jarg);
-            if (jres) {
-                const char* s = (*env)->GetStringUTFChars(env, jres, NULL);
-                snprintf(result, sizeof(result), "S:%s", s);
-                (*env)->ReleaseStringUTFChars(env, jres, s);
-                (*env)->DeleteLocalRef(env, jres);
-            }
-            (*env)->DeleteLocalRef(env, jcls);
-            (*env)->DeleteLocalRef(env, jmethod);
-            (*env)->DeleteLocalRef(env, jarg);
-        }
-        (*env)->DeleteLocalRef(env, runnerCls);
+    if (!runnerCls) {
+        snprintf(result, sizeof(result), "E:AsyncRunner not found");
+        goto done;
     }
 
+    jmethodID runMid = (*env)->GetStaticMethodID(env, runnerCls, "runStatic",
+        "(Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;)Ljava/lang/String;");
+    if (!runMid) {
+        snprintf(result, sizeof(result), "E:method not found: runStatic");
+        (*env)->DeleteLocalRef(env, runnerCls);
+        goto done;
+    }
+
+    jstring jcls = (*env)->NewStringUTF(env, t->className);
+    jstring jmethod = (*env)->NewStringUTF(env, t->methodName);
+    jobjectArray jargs = build_string_array(env, t->args, t->argCount);
+
+    jstring jres = (jstring)(*env)->CallStaticObjectMethod(env, runnerCls, runMid, jcls, jmethod, jargs);
+    if (jres) {
+        const char* s = (*env)->GetStringUTFChars(env, jres, NULL);
+        snprintf(result, sizeof(result), "S:%s", s);
+        (*env)->ReleaseStringUTFChars(env, jres, s);
+        (*env)->DeleteLocalRef(env, jres);
+    }
+
+    (*env)->DeleteLocalRef(env, jcls);
+    (*env)->DeleteLocalRef(env, jmethod);
+    (*env)->DeleteLocalRef(env, jargs);
+    (*env)->DeleteLocalRef(env, runnerCls);
+
+done:
+    (*env)->DeleteLocalRef(env, runnerCls);
     complete(t->pid, result);
-    free(t->className); free(t->methodName); free(t);
-    free(t->arg);
     (*g_jvm)->DetachCurrentThread(g_jvm);
+
+cleanup:
+    for (int i = 0; i < t->argCount; i++) free(t->args[i]);
+    free(t->args);
+    free(t->className);
+    free(t->methodName);
+    free(t);
     return NULL;
 }
 
@@ -78,13 +100,35 @@ int java_runAsync(lua_State* L) {
     int pid = (int)luaL_checkinteger(L, 1);
     const char* cls = luaL_checkstring(L, 2);
     const char* method = luaL_checkstring(L, 3);
-    const char* arg = luaL_optstring(L, 4, "");
+    
+    // 从第4个参数起都是方法参数
+    int argCount = lua_gettop(L) - 3;
+    char** args = malloc(sizeof(char*) * (argCount > 0 ? argCount : 1));
+    for (int i = 0; i < argCount; i++) {
+        if (lua_isstring(L, 4 + i)) {
+            args[i] = strdup(lua_tostring(L, 4 + i));
+        } else if (lua_isinteger(L, 4 + i)) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%lld", (long long)lua_tointeger(L, 4 + i));
+            args[i] = strdup(buf);
+        } else if (lua_isnumber(L, 4 + i)) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%.15g", lua_tonumber(L, 4 + i));
+            args[i] = strdup(buf);
+        } else if (lua_isboolean(L, 4 + i)) {
+            args[i] = strdup(lua_toboolean(L, 4 + i) ? "true" : "false");
+        } else {
+            args[i] = strdup("");
+        }
+    }
+    if (argCount == 0) { args[0] = strdup(""); argCount = 0; }
 
     Task* t = malloc(sizeof(Task));
     t->pid = pid;
     t->className = strdup(cls);
     t->methodName = strdup(method);
-    t->arg = strdup(arg);
+    t->argCount = argCount;
+    t->args = args;
 
     pthread_t tid;
     pthread_create(&tid, NULL, worker, t);
