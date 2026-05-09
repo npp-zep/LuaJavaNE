@@ -9,13 +9,9 @@ public class LuaAgent {
 
     public static void submitTask(AgentTask task) {
         new Thread(() -> {
-            try {
-                String result = AsyncRunner.runStatic(
-                    task.className, task.methodName, task.args);
-                complete(task.pid, result);
-            } catch (Exception e) {
-                complete(task.pid, "E:" + e.getMessage());
-            }
+            String result = AsyncRunner.runStatic(
+                task.className, task.methodName, task.args);
+            complete(task.pid, result);
         }).start();
     }
 

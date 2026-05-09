@@ -6,8 +6,10 @@
 #include <jni.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 extern JavaVM* g_jvm;
+extern pthread_mutex_t lua_mutex;
 
 // LuaAgent.complete() 的 JNI 实现
 JNIEXPORT void JNICALL Java_com_luajava_LuaAgent_complete
@@ -86,7 +88,7 @@ int java_checkPromise(lua_State* L) {
                     case 'I': lua_pushinteger(L, atoll(r + 2)); break;
                     case 'N': lua_pushnumber(L, atof(r + 2)); break;
                     case 'B': lua_pushboolean(L, r[2] == '1'); break;
-                    case 'E': lua_pushstring(L, r + 2); lua_error(L); break;
+                    case 'E': lua_pushstring(L, r + 2); break;
                     default:  lua_pushnil(L); break;
                 }
             } else {
