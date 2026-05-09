@@ -2,57 +2,32 @@ package com.luajava;
 
 import java.util.concurrent.*;
 
-/**
- * 后台线程代理，负责跨线程任务调度和结果通知。
- * 主线程通过 poll() 获取已完成的结果。
- */
 public class LuaAgent {
     private ExecutorService executor;
-    private ConcurrentLinkedQueue<Result> doneQueue;
+    private ConcurrentLinkedQueue<Runnable> pendingTasks;
 
     public LuaAgent() {
-        this.executor = Executors.newCachedThreadPool();
-        this.doneQueue = new ConcurrentLinkedQueue<>();
+        this.executor = Executors.newSingleThreadExecutor();
+        this.pendingTasks = new ConcurrentLinkedQueue<>();
     }
 
-    /** 提交异步任务：执行 Lua 函数，完成后将 Promise ID 和结果放入完成队列 */
-    public void submitTask(LuaRuntime L, int promiseId, int funcRef) {
-        executor.submit(() -> {
-            try {
-                L.callFunction("__agent_exec", funcRef);
-                doneQueue.add(new Result(promiseId, null, null));
-            } catch (Exception e) {
-                doneQueue.add(new Result(promiseId, null, e.getMessage()));
-            }
+    /** 工作线程调用：在主线程的 lua_State 上执行函数引用 */
+    public void submitTask(int promiseId, long funcRef) {
+        pendingTasks.add(() -> {
+            // 由主线程的 poll() 调用，在主线程中执行
+            LuaRuntime.executeAsync(promiseId, funcRef);
         });
     }
 
-    /** 主线程轮询：取出所有已完成的任务并 complete 对应的 promise */
+    /** 主线程轮询：取出所有待执行的 Lua 任务并执行 */
     public void poll(LuaRuntime L) {
-        Result r;
-        while ((r = doneQueue.poll()) != null) {
-            if (r.error != null) {
-                L.doString("java.complete(" + r.promiseId + ", nil, '" + r.error + "')");
-            } else {
-                L.doString("java.complete(" + r.promiseId + ", 'done')");
-            }
+        Runnable task;
+        while ((task = pendingTasks.poll()) != null) {
+            task.run();
         }
     }
 
-    /** 关闭线程池 */
     public void shutdown() {
         executor.shutdown();
-    }
-
-    private static class Result {
-        int promiseId;
-        Object value;
-        String error;
-
-        Result(int id, Object val, String err) {
-            this.promiseId = id;
-            this.value = val;
-            this.error = err;
-        }
     }
 }

@@ -1,4 +1,4 @@
-// Lua5.4.8/lualib_async.c
+// Lua5.4.8/lualib_async.c — Agent 模式异步（主线程协程）
 #include "lua.h"
 #include "lauxlib.h"
 #include "lualib.h"
@@ -10,97 +10,70 @@
 
 extern JavaVM* g_jvm;
 
-typedef struct AsyncTask {
-    lua_State* L;
-    int funcRef;
-    int promiseId;
-} AsyncTask;
+// LuaAgent 的引用（Java 侧设置）
+static jobject g_agent = NULL;
+static jmethodID g_submitMethod = NULL;
 
-static void* run_async_thread(void* arg) {
-    AsyncTask* task = (AsyncTask*)arg;
-    lua_State* mainL = task->L;
-
-    JNIEnv* env = NULL;
-    if ((*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL) != 0) {
-        free(task);
-        return NULL;
-    }
-
-    lua_settop(mainL, 0);
-    lua_rawgeti(mainL, LUA_REGISTRYINDEX, task->funcRef);
-    int err = lua_pcall(mainL, 0, 1, 0);
-
-    if (err == LUA_OK) {
-        char resultStr[256] = "";
-        if (lua_isboolean(mainL, -1)) {
-            snprintf(resultStr, sizeof(resultStr), "B:%d", lua_toboolean(mainL, -1));
-        } else if (lua_isinteger(mainL, -1)) {
-            snprintf(resultStr, sizeof(resultStr), "I:%lld", (long long)lua_tointeger(mainL, -1));
-        } else if (lua_isnumber(mainL, -1)) {
-            snprintf(resultStr, sizeof(resultStr), "N:%.15g", lua_tonumber(mainL, -1));
-        } else if (lua_isstring(mainL, -1)) {
-            snprintf(resultStr, sizeof(resultStr), "S:%s", lua_tostring(mainL, -1));
-        } else {
-            snprintf(resultStr, sizeof(resultStr), "X:");
-        }
-        lua_pop(mainL, 1);
-
-        // 写回 Promise 结果（这里不应持 lua_mutex，只操作 C 链表）
-        PromiseEntry* entry = promise_registry;
-        while (entry) {
-            if (entry->id == task->promiseId) {
-                if (entry->result) free(entry->result);
-                entry->result = strdup(resultStr);
-                entry->done = 1;
-                break;
-            }
-            entry = entry->next;
-        }
-    } else {
-        // 发生错误
-        const char* errMsg = lua_tostring(mainL, -1);
-        PromiseEntry* entry = promise_registry;
-        while (entry) {
-            if (entry->id == task->promiseId) {
-                if (entry->result) free(entry->result);
-                char errBuf[512];
-                snprintf(errBuf, sizeof(errBuf), "E:%s", errMsg ? errMsg : "unknown error");
-                entry->result = strdup(errBuf);
-                entry->done = 1;
-                break;
-            }
-            entry = entry->next;
-        }
-        lua_pop(mainL, 1);
-    }
-
-    luaL_unref(mainL, LUA_REGISTRYINDEX, task->funcRef);
-    (*g_jvm)->DetachCurrentThread(g_jvm);
-    free(task);
-    return NULL;
+// 初始化 Agent 引用
+JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1setAgent
+  (JNIEnv* env, jobject obj, jlong Lptr, jobject agent) {
+    if (g_agent) (*env)->DeleteGlobalRef(env, g_agent);
+    g_agent = (*env)->NewGlobalRef(env, agent);
+    jclass agentCls = (*env)->GetObjectClass(env, agent);
+    g_submitMethod = (*env)->GetMethodID(env, agentCls, "submitTask", "(IJ)V");
+    (*env)->DeleteLocalRef(env, agentCls);
 }
 
+// runAsync: 在主线程通过 Agent 执行 Lua 函数
 int java_runAsync(lua_State* L) {
     int promiseId = (int)luaL_checkinteger(L, 1);
     luaL_checktype(L, 2, LUA_TFUNCTION);
-
-    lua_pushvalue(L, 2);
-    int funcRef = luaL_ref(L, LUA_REGISTRYINDEX);
-
-    AsyncTask* task = (AsyncTask*)malloc(sizeof(AsyncTask));
-    task->L = L;
-    task->funcRef = funcRef;
-    task->promiseId = promiseId;
-
-    pthread_t tid;
-    pthread_create(&tid, NULL, run_async_thread, task);
-    pthread_detach(tid);
-
+    
+    int err = lua_pcall(L, 0, 1, 0);
+    
+    PromiseEntry* entry = promise_registry;
+    while (entry) {
+        if (entry->id == promiseId) {
+            char resultStr[256] = "X:";
+            if (err == LUA_OK) {
+                if (lua_isboolean(L, -1)) {
+                    snprintf(resultStr, sizeof(resultStr), "B:%d", lua_toboolean(L, -1));
+                } else if (lua_isinteger(L, -1)) {
+                    snprintf(resultStr, sizeof(resultStr), "I:%lld", (long long)lua_tointeger(L, -1));
+                } else if (lua_isnumber(L, -1)) {
+                    snprintf(resultStr, sizeof(resultStr), "N:%.15g", lua_tonumber(L, -1));
+                } else if (lua_isstring(L, -1)) {
+                    snprintf(resultStr, sizeof(resultStr), "S:%s", lua_tostring(L, -1));
+                }
+                lua_pop(L, 1);
+            } else {
+                const char* msg = lua_tostring(L, -1);
+                snprintf(resultStr, sizeof(resultStr), "E:%s", msg ? msg : "async error");
+                lua_pop(L, 1);
+            }
+            if (entry->result) free(entry->result);
+            entry->result = strdup(resultStr);
+            entry->done = 1;
+            break;
+        }
+        entry = entry->next;
+    }
     return 0;
 }
 
+// checkPromise: 主线程轮询
 int java_checkPromise(lua_State* L) {
     int id = (int)luaL_checkinteger(L, 1);
+    // 每次 checkPromise 时消费 Agent 队列
+    if (g_agent && g_submitMethod) {
+        JNIEnv* env = NULL;
+        (*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL);
+        if (env) {
+            jclass agentCls = (*env)->GetObjectClass(env, g_agent);
+            jmethodID pollMethod = (*env)->GetMethodID(env, agentCls, "poll", "(Lcom/luajava/LuaRuntime;)V");
+            (*env)->DeleteLocalRef(env, agentCls);
+        }
+    }
     PromiseEntry* entry = promise_registry;
     while (entry) {
         if (entry->id == id) {

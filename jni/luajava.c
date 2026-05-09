@@ -1,5 +1,6 @@
 // jni/luajava.c
 #include "luajava.h"
+extern int luaopen_java(lua_State* L);
 #include "com_luajava_LuaRuntime.h"
 #include "com_luajava_LuaFunctionObj.h"
 #include "com_luajava_LuaInvocationHandler.h"
@@ -802,4 +803,34 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaPromise_resumeExceptionally
     (*env)->SetBooleanField(env, obj, doneField, JNI_TRUE);
     luaL_unref(L, LUA_REGISTRYINDEX, ref);
     // LUA_UNLOCK();
+}
+
+// ========== LuaRuntime._newAgentState ==========
+JNIEXPORT jlong JNICALL Java_com_luajava_LuaRuntime__1newAgentState
+  (JNIEnv* env, jclass cls, jlong mainLptr) {
+    LUA_LOCK();
+    lua_State* L = luaL_newstate();
+    if (L) {
+        // 只加载基础库和 java 库，不加载 io/os 等（安全隔离）
+        luaL_requiref(L, "_G", luaopen_base, 1);
+        lua_pop(L, 1);
+        luaL_requiref(L, LUA_TABLIBNAME, luaopen_table, 1);
+        lua_pop(L, 1);
+        luaL_requiref(L, LUA_STRLIBNAME, luaopen_string, 1);
+        lua_pop(L, 1);
+        luaL_requiref(L, LUA_MATHLIBNAME, luaopen_math, 1);
+        luaL_requiref(L, LUA_LOADLIBNAME, luaopen_package, 1);
+        lua_pop(L, 1);
+        lua_pop(L, 1);
+        luaL_requiref(L, LUA_UTF8LIBNAME, luaopen_utf8, 1);
+        lua_pop(L, 1);
+        luaL_requiref(L, "java", luaopen_java, 1);
+
+        // 把 state 指针存入注册表
+        lua_pushstring(L, "luajava_stateptr");
+        lua_pushinteger(L, (lua_Integer)(uintptr_t)L);
+        lua_settable(L, LUA_REGISTRYINDEX);
+    }
+    LUA_UNLOCK();
+    return (jlong)(uintptr_t)L;
 }

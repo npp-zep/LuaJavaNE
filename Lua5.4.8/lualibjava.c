@@ -1029,6 +1029,7 @@ static const luaL_Reg javalib[] = {
     {NULL, NULL}
 };
 
+#include <stdio.h>
 int luaopen_java(lua_State* L) {
     create_metatables(L);
     luaL_newlib(L, javalib);

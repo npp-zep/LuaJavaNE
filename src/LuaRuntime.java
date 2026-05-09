@@ -5,6 +5,7 @@ import java.lang.reflect.Method;
 
 public class LuaRuntime {
     private static boolean loaded = false;
+    private static LuaRuntime mainInstance = null;
 
     static {
         loadLibrary();
@@ -12,23 +13,15 @@ public class LuaRuntime {
 
     private static void loadLibrary() {
         if (loaded) return;
-
-        // 1. 系统属性
         String propPath = System.getProperty("luajava.library.path");
         if (propPath != null && tryLoad(propPath)) return;
-
-        // 2. 环境变量
         String envPath = System.getenv("LUAJAVA_LIBRARY_PATH");
         if (envPath != null && tryLoad(envPath)) return;
-
-        // 3. 系统库名
         try {
             System.loadLibrary("luajava");
             loaded = true;
             return;
         } catch (UnsatisfiedLinkError ignored) {}
-
-        // 4. fallback
         String cwd = System.getProperty("user.dir");
         String[] names = {"build/luajava.so", "luajava.so", "libluajava.so"};
         for (String name : names) {
@@ -39,7 +32,6 @@ public class LuaRuntime {
                 return;
             }
         }
-
         throw new UnsatisfiedLinkError(
             "Cannot find luajava native library.\n" +
             "  Searched: " + new File(cwd, "build/luajava.so").getAbsolutePath() + "\n" +
@@ -59,34 +51,34 @@ public class LuaRuntime {
         return false;
     }
 
-    // ========== 实例成员 ==========
-
     long statePtr;
     LuaAgent agent;
 
     public LuaRuntime() {
         agent = new LuaAgent();
         statePtr = _newState();
+        mainInstance = this;
+        _setAgent(statePtr, agent);
     }
-
-    // ========== 基础 API ==========
 
     public void doString(String script) {
         _doString(statePtr, script);
+        agent.poll(this);  // 执行异步任务
     }
-    /** 主线程轮询：消费完成队列，唤醒等待的协程 */
+
+    public Object callFunction(String funcName, Object... args) {
+        Object[] results = callFunctionMultiple(funcName, args);
+        agent.poll(this);  // 执行异步任务
+        return (results != null && results.length > 0) ? results[0] : null;
+    }
+
     public void poll() {
         agent.poll(this);
     }
 
-    /** 提交异步任务到 Agent 线程池 */
-    public void submitTask(int promiseId, int funcRef) {
-        agent.submitTask(this, promiseId, funcRef);
-    }
-
     public void close() {
         if (statePtr != 0) {
-        agent.shutdown();
+            agent.shutdown();
             _close(statePtr);
             statePtr = 0;
         }
@@ -100,11 +92,6 @@ public class LuaRuntime {
         return _getGlobal(statePtr, name);
     }
 
-    public Object callFunction(String funcName, Object... args) {
-        Object[] results = callFunctionMultiple(funcName, args);
-        return (results != null && results.length > 0) ? results[0] : null;
-    }
-
     public native Object[] callFunctionMultiple(String funcName, Object... args);
 
     public LuaFunctionObj compile(String luaCode) {
@@ -115,9 +102,8 @@ public class LuaRuntime {
 
     public void doFile(String path) {
         _doFile(statePtr, path);
+        agent.poll(this);
     }
-
-    // ========== 注解绑定 ==========
 
     public void registerModule(Object module) {
         Class<?> clazz = module.getClass();
@@ -135,12 +121,19 @@ public class LuaRuntime {
         }
     }
 
+    /** Agent 回调：在主线程执行异步函数并 complete Promise */
+    static void executeAsync(int promiseId, long funcRef) {
+        if (mainInstance != null && mainInstance.statePtr != 0) {
+            mainInstance._executeAsync(mainInstance.statePtr, promiseId, funcRef);
+        }
+    }
+
     public native void bindJavaMethod(String luaName, Object module, String methodName, Class<?>... paramTypes);
     private native void _registerCallback(long L, String luaName, LuaJavaCallback callback);
-
-    // ========== native 方法 ==========
+    private native void _executeAsync(long L, int promiseId, long funcRef);
 
     private native long _newState();
+    private native void _setAgent(long L, LuaAgent agent);
     private native void _doString(long L, String script);
     private native void _close(long L);
     private native void _setGlobal(long L, String name, String value);
