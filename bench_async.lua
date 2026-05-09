@@ -9,37 +9,31 @@ local function await(id)
     end
 end
 
-local ITER = 100
-
--- ====== 单线程直接执行 ======
+-- ====== 100次串行 ======
 local start = os.clock()
-for i = 1, ITER do
-    local x = 0
-    for j = 1, 100 do x = x + j end
-end
-print("单线程直接执行:", string.format("%.4f秒", os.clock() - start))
-
--- ====== 多线程异步执行（轻量计算） ======
-start = os.clock()
-for i = 1, ITER do
+for i = 1, 100 do
     local id = java.promise()
-    java.runAsync(id, function()
-        local x = 0
-        for j = 1, 100 do x = x + j end
-        return x
-    end)
+    java.runAsync(id, 'java.lang.Integer', 'parseInt', '42')
     await(id)
 end
-print("多线程异步(轻量):", string.format("%.4f秒", os.clock() - start))
+print(string.format("异步调Java(100次): %.4f秒", os.clock() - start))
 
--- ====== 多线程异步执行（含 Java 调用） ======
+-- ====== 10并发 sleep(100ms) ======
+local ids = {}
 start = os.clock()
-for i = 1, ITER do
-    local id = java.promise()
-    java.runAsync(id, function()
-        local Thread = java.import('java.lang.Thread')
-        return "ok"
-    end)
-    await(id)
+for i = 1, 10 do
+    ids[i] = java.promise()
+    java.runAsync(ids[i], 'java.lang.Thread', 'sleep', '100')
 end
-print("多线程异步(含Java):", string.format("%.4f秒", os.clock() - start))
+for i = 1, 10 do await(ids[i]) end
+print(string.format("10并发sleep(100ms): %.4f秒", os.clock() - start))
+
+-- ====== 50并发 sleep(10ms) ======
+ids = {}
+start = os.clock()
+for i = 1, 50 do
+    ids[i] = java.promise()
+    java.runAsync(ids[i], 'java.lang.Thread', 'sleep', '10')
+end
+for i = 1, 50 do await(ids[i]) end
+print(string.format("50并发sleep(10ms): %.4f秒", os.clock() - start))

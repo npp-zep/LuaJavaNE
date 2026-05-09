@@ -1,21 +1,23 @@
 package com.luajava;
 
-import java.util.concurrent.*;
-
 public class LuaAgent {
-    private ExecutorService executor;
+    private static LuaAgent instance;
 
-    public LuaAgent() {
-        this.executor = Executors.newCachedThreadPool();
+    public static void init() {
+        if (instance == null) instance = new LuaAgent();
     }
 
-    public void submitTask(Runnable task) {
-        executor.submit(task);
+    public static void submitTask(AgentTask task) {
+        new Thread(() -> {
+            try {
+                String result = AsyncRunner.runStatic(
+                    task.className, task.methodName, task.args);
+                complete(task.pid, result);
+            } catch (Exception e) {
+                complete(task.pid, "E:" + e.getMessage());
+            }
+        }).start();
     }
 
-    public void poll(LuaRuntime L) {}
-
-    public void shutdown() {
-        executor.shutdown();
-    }
+    private static native void complete(int pid, String result);
 }

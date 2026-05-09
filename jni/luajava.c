@@ -836,7 +836,3 @@ JNIEXPORT jlong JNICALL Java_com_luajava_LuaRuntime__1newAgentState
 }
 
 // ========== LuaRuntime._setAgent ==========
-JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1setAgent
-  (JNIEnv* env, jobject obj, jlong Lptr, jobject agent) {
-    // 保留接口，当前 runAsync 不依赖 Agent
-}
