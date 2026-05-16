@@ -39,8 +39,6 @@ file(GLOB LUA_CORE_SRCS
     "${LUA_DIR}/lzio.c"
 )
 
-# lualib_clac.c 保留在静态库中（纯数学，不需要暴露符号）
-list(APPEND LUA_CORE_SRCS "${LUA_DIR}/lualib_clac.c")
 
 add_library(lua STATIC ${LUA_CORE_SRCS})
 target_include_directories(lua PUBLIC "${LUA_DIR}")
@@ -67,6 +65,7 @@ add_library(luajava SHARED
     "${JNI_DIR}/luajava.c"
     "${LUA_DIR}/lualibjava.c"    # 直接编译进 .so，暴露 promise_registry
     "${LUA_DIR}/lualib_async.c"  # 直接编译进 .so，引用 promise_registry
+    "${LUA_DIR}/lualib_clac.c"
 )
 
 target_include_directories(luajava PRIVATE
