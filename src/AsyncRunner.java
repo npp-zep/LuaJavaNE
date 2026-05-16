@@ -4,27 +4,19 @@ import java.lang.reflect.*;
 
 public class AsyncRunner {
     public static String runStatic(String className, String methodName, String[] args) {
-        return runMethod(className, null, methodName, args);
+        try {
+            Class<?> cls = Class.forName(className);
+            if (methodName.equals("new")) return callConstructor(cls, args);
+            return callMethod(cls, null, methodName, args);
+        } catch (Throwable e) {
+            return "E:" + e.toString();
+        }
     }
 
     public static String runInstance(Object instance, String methodName, String[] args) {
-        if (instance == null) return "E:null instance";
-        return runMethod(instance.getClass().getName(), instance, methodName, args);
-    }
-
-    private static String runMethod(String className, Object obj, String methodName, String[] args) {
         try {
-            Class<?> cls = obj != null ? obj.getClass() : Class.forName(className);
-            if (methodName.equals("new") && obj == null) return callConstructor(cls, args);
-            for (Method m : cls.getMethods()) {
-                if (!m.getName().equals(methodName)) continue;
-                Object[] cv = matchArgs(m.getParameterTypes(), args);
-                if (cv != null) {
-                    try { return serialize(m.invoke(obj, cv)); }
-                    catch (InvocationTargetException e) { return "E:" + e.getCause(); }
-                }
-            }
-            return "E:no matching method: " + methodName;
+            if (instance == null) return "E:null instance";
+            return callMethod(instance.getClass(), instance, methodName, args);
         } catch (Throwable e) {
             return "E:" + e.toString();
         }
@@ -41,6 +33,17 @@ public class AsyncRunner {
         return "E:no matching constructor";
     }
 
+    private static String callMethod(Class<?> cls, Object obj, String name, String[] args) throws Exception {
+        for (Method m : cls.getMethods()) {
+            if (!m.getName().equals(name)) continue;
+            Object[] cv = matchArgs(m.getParameterTypes(), args);
+            if (cv != null) {
+                try { return serialize(m.invoke(obj, cv)); }
+                catch (InvocationTargetException e) { return "E:" + e.getCause(); }
+            }
+        }
+        return "E:no matching method: " + name;
+    }
 
     private static Object[] matchArgs(Class<?>[] pt, String[] pairs) {
         if (pt.length == 0 && pairs.length == 0) return new Object[0];
@@ -66,6 +69,20 @@ public class AsyncRunner {
     }
 
     private static String serialize(Object obj) {
+        if (obj == null) return "X:nil";
+        if (obj instanceof Object[]) {
+            Object[] arr = (Object[]) obj;
+            StringBuilder sb = new StringBuilder("M" + arr.length);
+            for (Object item : arr) {
+                sb.append("|");
+                sb.append(serializeSingle(item));
+            }
+            return sb.toString();
+        }
+        return serializeSingle(obj);
+    }
+
+    private static String serializeSingle(Object obj) {
         if (obj == null) return "X:nil";
         if (obj instanceof String) return "S:" + obj;
         if (obj instanceof Integer || obj instanceof Long) return "I:" + obj;

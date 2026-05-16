@@ -132,6 +132,7 @@ int java_runAsyncObj(lua_State* L) {
 
 int java_checkPromise(lua_State* L) {
     int id = (int)luaL_checkinteger(L, 1);
+    int initial = lua_gettop(L);
     pthread_mutex_lock(&promise_mutex);
     PromiseEntry* e = promise_registry;
     while (e) {
@@ -140,6 +141,29 @@ int java_checkPromise(lua_State* L) {
             if (e->done && e->result) {
                 char* r = e->result;
                 switch (r[0]) {
+                    case 'M': {
+                        int count = atoi(r + 1);
+                        char* p = strchr(r, '|');
+                        if (!p) { lua_pushnil(L); break; }
+                        p++;
+                        for (int i = 0; i < count && p && *p; i++) {
+                            char type = *p;
+                            char* val = p + 2;
+                            char* end = strchr(p, '|');
+                            size_t len = end ? (size_t)(end - val) : strlen(val);
+                            switch (type) {
+                                case 'S': lua_pushlstring(L, val, len); break;
+                                case 'I': { char buf[32]; memcpy(buf, val, len); buf[len]='\0'; lua_pushinteger(L, atoll(buf)); break; }
+                                case 'N': { char buf[64]; memcpy(buf, val, len); buf[len]='\0'; lua_pushnumber(L, atof(buf)); break; }
+                                case 'B': lua_pushboolean(L, (len == 4 && memcmp(val, "true", 4)==0) || (len == 1 && *val == '1')); break;
+                                case 'X': lua_pushnil(L); break;
+                                default: lua_pushnil(L);
+                            }
+                            p = end;
+                            if (p) p++;
+                        }
+                        break;
+                    }
                     case 'S': lua_pushstring(L, r + 2); break;
                     case 'I': lua_pushinteger(L, atoll(r + 2)); break;
                     case 'N': lua_pushnumber(L, atof(r + 2)); break;
@@ -151,7 +175,7 @@ int java_checkPromise(lua_State* L) {
                 lua_pushnil(L);
             }
             pthread_mutex_unlock(&promise_mutex);
-            return 2;
+            return lua_gettop(L) - initial;  // 返回压入栈的总数（含 done）
         }
         e = e->next;
     }
