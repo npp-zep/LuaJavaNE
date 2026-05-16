@@ -26,8 +26,13 @@ public class AsyncRunner {
         for (Constructor<?> c : cls.getConstructors()) {
             Object[] cv = matchArgs(c.getParameterTypes(), args);
             if (cv != null) {
-                try { Object obj = c.newInstance(cv); return "O:" + obj.getClass().getName() + "@" + Integer.toHexString(obj.hashCode()); }
-                catch (InvocationTargetException e) { return "E:" + e.getCause(); }
+                try {
+                    Object obj = c.newInstance(cv);
+                    int oid = LuaAgent.registerObject(obj);
+                    return "O:" + oid;
+                } catch (InvocationTargetException e) {
+                    return "E:" + e.getCause();
+                }
             }
         }
         return "E:no matching constructor";

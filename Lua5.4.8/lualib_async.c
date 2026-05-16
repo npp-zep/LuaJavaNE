@@ -8,6 +8,7 @@
 #include <string.h>
 
 extern JavaVM* g_jvm;
+extern int new_java_object_ud(lua_State* L, jobject obj);
 
 static pthread_mutex_t promise_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -168,7 +169,7 @@ int java_checkPromise(lua_State* L) {
                     case 'I': lua_pushinteger(L, atoll(r + 2)); break;
                     case 'N': lua_pushnumber(L, atof(r + 2)); break;
                     case 'B': lua_pushboolean(L, (r[2] == 't' || r[2] == '1')); break;
-                    case 'O': lua_pushstring(L, r + 2); break;
+                    case 'O': lua_pushinteger(L, atoi(r + 2)); break;
                     case 'E': lua_pushstring(L, r + 2); break;
                     default:  lua_pushnil(L); break;
                 }
@@ -184,4 +185,23 @@ int java_checkPromise(lua_State* L) {
     lua_pushboolean(L, 0);
     lua_pushnil(L);
     return 2;
+}
+
+int java_getObject(lua_State* L) {
+    int id = (int)luaL_checkinteger(L, 1);
+    JNIEnv* env = NULL;
+    (*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL);
+    if (!env) { lua_pushnil(L); return 1; }
+
+    jclass agentCls = (*env)->FindClass(env, "com/luajava/LuaAgent");
+    jmethodID getObjMid = (*env)->GetStaticMethodID(env, agentCls, "getObject", "(I)Ljava/lang/Object;");
+    if (!getObjMid) { (*env)->ExceptionClear(env); lua_pushnil(L); (*env)->DeleteLocalRef(env, agentCls); return 1; }
+
+    jobject obj = (*env)->CallStaticObjectMethod(env, agentCls, getObjMid, (jint)id);
+    (*env)->DeleteLocalRef(env, agentCls);
+    if (!obj) { lua_pushnil(L); return 1; }
+
+    new_java_object_ud(L, obj);  // 使用 lualibjava.c 中的函数包装
+    (*env)->DeleteLocalRef(env, obj);
+    return 1;
 }

@@ -10,6 +10,7 @@
 
 extern JNIEnv* getEnv();
 extern int java_runAsync(lua_State* L);
+extern int java_getObject(lua_State* L);
 extern int java_runAsyncObj(lua_State* L);
 extern int java_checkPromise(lua_State* L);
 
@@ -1028,6 +1029,7 @@ static const luaL_Reg javalib[] = {
     {"__agent_exec", java_agent_exec},
     {"runAsync",    java_runAsync},
     {"runAsyncObj", java_runAsyncObj},
+    {"getObject",   java_getObject},
     {"checkPromise", java_checkPromise},
     {NULL, NULL}
 };
