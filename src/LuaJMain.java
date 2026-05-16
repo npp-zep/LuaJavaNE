@@ -23,11 +23,10 @@ public class LuaJMain {
         String javaVendor = System.getProperty("java.vendor");
         String osName = System.getProperty("os.name");
         String osArch = System.getProperty("os.arch");
-        String cc = System.getProperty("luajava.cc", "Unknown");
 
         System.out.println("LuaJavaNE (Lua 5.4.8, " + buildTime + ")");
         System.out.println("[" + javaVendor + " JDK " + javaVer + " on " + osName + " " + osArch + "]");
-        System.out.println("Built with: " + cc);
+        System.out.println("Built with: " + getCCVersion());
         System.out.println("Type \"help\", \"copyright\", \"credits\" or \"license\" for more information.");
     }
 
@@ -42,26 +41,23 @@ public class LuaJMain {
         } catch (Exception ignored) {}
         return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new java.util.Date());
     }
+    static String getCCVersion() {
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"cc", "--version"});
+            java.io.BufferedReader r = new java.io.BufferedReader(
+                new java.io.InputStreamReader(p.getInputStream()));
+            String line = r.readLine();
+            r.close();
+            p.waitFor();
+            return line != null ? line : "Unknown";
+        } catch (Exception e) {
+            return "Unknown";
+        }
+    }
 
     static void help() {
-        System.out.println("LuaJavaNE - Lua 5.4.8 + Java bidirectional interop engine");
-        System.out.println("Usage: luaj [options] [script.lua] [args...]");
-        System.out.println("");
-        System.out.println("Options:");
-        System.out.println("  -e <code>  execute Lua code");
-        System.out.println("  -v, --version  print version information");
-        System.out.println("  -h, --help     show this help");
-        System.out.println("");
-        System.out.println("REPL commands:");
-        System.out.println("  \\q, \\quit     exit");
-        System.out.println("  \\h, \\help     show this help");
-        System.out.println("  =expr         evaluate and print expression");
-        System.out.println("  help, copyright, credits, license  show information");
-        System.out.println("");
-        System.out.println("Examples:");
-        System.out.println("  luaj -e \"print(1+1)\"");
-        System.out.println("  luaj my_script.lua");
-        System.out.println("  luaj -v");
+        System.out.println("luaj - LuaJavaNE interpreter (Lua 5.4.8 + Java)");
+        System.out.println("Usage: luaj [-e code] [-v] [-h] [script.lua] [args...]");
     }
 
     static void execString(String code) {
@@ -110,21 +106,17 @@ public class LuaJMain {
             if (line.equals("\\q") || line.equals("\\quit")) break;
 
             if (line.equals("\\h") || line.equals("\\help") || line.equals("help")) {
-                help();
+                System.out.println("Commands: \\q quit, =expr print result, help/copyright/credits/license");
                 continue;
             }
 
             if (line.equals("\\copyright") || line.equals("copyright") ||
                 line.equals("\\credits") || line.equals("credits") ||
                 line.equals("\\license") || line.equals("license")) {
-                System.out.println("LuaJavaNE - Lua 5.4.8 + Java interop engine");
+                System.out.println("LuaJavaNE - Lua 5.4.8 + Java interop");
                 System.out.println("Copyright (c) 2026 npp-zep");
                 System.out.println("MIT License. See LICENSE file for details.");
-                System.out.println("");
-                System.out.println("Third-party licenses:");
-                System.out.println("  Lua 5.4.8     : MIT (https://www.lua.org/license.html)");
-                System.out.println("  JLine 3       : BSD-3 (https://github.com/jline/jline3/blob/master/LICENSE)");
-                System.out.println("  JUnit 5       : EPL-1.0 (https://junit.org/junit5/docs/current/user-guide/#overview-getting-started)");
+                System.out.println("Third-party: Lua 5.4.8 (MIT), JLine 3 (BSD-3), JUnit 5 (EPL-1.0)");
                 continue;
             }
 
