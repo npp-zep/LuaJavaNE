@@ -868,6 +868,7 @@ static int java_promise(lua_State* L) {
     entry->id = promise_next_id++;
     entry->co = NULL;
     entry->done = 0;
+    entry->result = NULL;
     entry->next = promise_registry;
     promise_registry = entry;
     lua_pushinteger(L, entry->id);

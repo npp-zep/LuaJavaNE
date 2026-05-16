@@ -1,35 +1,75 @@
 package com.luajava;
 
-import java.lang.reflect.Method;
+import java.lang.reflect.*;
 
 public class AsyncRunner {
     public static String runStatic(String className, String methodName, String[] args) {
         try {
             Class<?> cls = Class.forName(className);
-            
-            Method matched = null;
-            Object[] converted = null;
-            for (Method m : cls.getMethods()) {
-                if (!m.getName().equals(methodName)) continue;
-                if (args.length != m.getParameterCount()) continue;
-                
-                Object[] cv = new Object[args.length];
-                boolean ok = true;
-                for (int i = 0; i < args.length; i++) {
-                    try { cv[i] = convert(args[i], m.getParameterTypes()[i]); }
-                    catch (Exception e) { ok = false; break; }
-                }
-                if (ok) { matched = m; converted = cv; break; }
-            }
-            
-            if (matched == null) return "E:no matching method: " + methodName;
-            Object result = matched.invoke(null, converted);
-            return "S:" + (result != null ? result.toString() : "nil");
+            if (methodName.equals("new")) return callConstructor(cls, args);
+            return callMethod(cls, null, methodName, args);
         } catch (Throwable e) {
             return "E:" + e.toString();
         }
     }
-    
+
+    private static String callConstructor(Class<?> cls, String[] args) throws Exception {
+        for (Constructor<?> c : cls.getConstructors()) {
+            Object[] cv = matchArgs(c.getParameterTypes(), args);
+            if (cv != null) {
+                try { return serialize(c.newInstance(cv)); }
+                catch (InvocationTargetException e) { return "E:" + e.getCause(); }
+            }
+        }
+        return "E:no matching constructor";
+    }
+
+    private static String callMethod(Class<?> cls, Object obj, String name, String[] args) throws Exception {
+        for (Method m : cls.getMethods()) {
+            if (!m.getName().equals(name)) continue;
+            Object[] cv = matchArgs(m.getParameterTypes(), args);
+            if (cv != null) {
+                try { return serialize(m.invoke(obj, cv)); }
+                catch (InvocationTargetException e) { return "E:" + e.getCause(); }
+            }
+        }
+        return "E:no matching method: " + name;
+    }
+
+    private static Object[] matchArgs(Class<?>[] pt, String[] pairs) {
+        if (pt.length == 0 && pairs.length == 0) return new Object[0];
+        if (pairs.length != pt.length * 2) return null;
+        Object[] r = new Object[pt.length];
+        for (int i = 0; i < pt.length; i++) {
+            try {
+                r[i] = convert(pairs[i*2], pairs[i*2+1], pt[i]);
+                if (r[i] == null) return null;
+            } catch (Exception e) {
+                return null;
+            }
+        }
+        return r;
+    }
+
+    private static Object convert(String v, String hint, Class<?> t) {
+        if (t == String.class || t == Object.class) return v;
+        if (t == int.class || t == Integer.class) return Integer.parseInt(v);
+        if (t == long.class || t == Long.class) return Long.parseLong(v);
+        if (t == double.class || t == Double.class) return Double.parseDouble(v);
+        if (t == float.class || t == Float.class) return Float.parseFloat(v);
+        if (t == boolean.class || t == Boolean.class) return Boolean.parseBoolean(v);
+        return null;
+    }
+
+    private static String serialize(Object obj) {
+        if (obj == null) return "X:nil";
+        if (obj instanceof String) return "S:" + obj;
+        if (obj instanceof Integer || obj instanceof Long) return "I:" + obj;
+        if (obj instanceof Number) return "N:" + obj;
+        if (obj instanceof Boolean) return "B:" + obj;
+        return "S:" + obj.toString();
+    }
+
     public static String heavyCalc(String countStr) {
         int n = Integer.parseInt(countStr);
         double sum = 0;
@@ -37,14 +77,5 @@ public class AsyncRunner {
             for (int j = 1; j <= 100; j++)
                 sum += Math.sin(j) * Math.cos(j);
         return String.valueOf(sum);
-    }
-
-    private static Object convert(String s, Class<?> target) {
-        if (target == String.class) return s;
-        if (target == int.class || target == Integer.class) return Integer.parseInt(s);
-        if (target == long.class || target == Long.class) return Long.parseLong(s);
-        if (target == double.class || target == Double.class) return Double.parseDouble(s);
-        if (target == boolean.class || target == Boolean.class) return Boolean.parseBoolean(s);
-        throw new IllegalArgumentException("unsupported type: " + target);
     }
 }
