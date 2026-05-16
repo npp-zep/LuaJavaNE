@@ -88,6 +88,48 @@ int java_runAsync(lua_State* L) {
     return 0;
 }
 
+int java_runAsyncObj(lua_State* L) {
+    int pid = (int)luaL_checkinteger(L, 1);
+    luaL_checktype(L, 2, LUA_TUSERDATA);
+    const char* method = luaL_checkstring(L, 3);
+    int argCount = lua_gettop(L) - 3;
+    int pairCount = argCount * 2;
+
+    JNIEnv* env = NULL;
+    (*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL);
+    if (!env) return 0;
+
+    jclass taskCls = (*env)->FindClass(env, "com/luajava/AgentTask");
+    jmethodID ctor = (*env)->GetMethodID(env, taskCls, "<init>", "(ILjava/lang/Object;Ljava/lang/String;[Ljava/lang/String;)V");
+    jstring jmtd = (*env)->NewStringUTF(env, method);
+
+    jclass strCls = (*env)->FindClass(env, "java/lang/String");
+    jobjectArray jargs = (*env)->NewObjectArray(env, pairCount > 0 ? pairCount : 0, strCls, NULL);
+    for (int i = 0; i < argCount; i++) {
+        const char* val = lua_tostring(L, 4 + i);
+        char hint[2] = { get_type_hint(L, 4 + i), '\0' };
+        jstring jval = (*env)->NewStringUTF(env, val ? val : "");
+        jstring jhint = (*env)->NewStringUTF(env, hint);
+        (*env)->SetObjectArrayElement(env, jargs, i * 2, jval);
+        (*env)->SetObjectArrayElement(env, jargs, i * 2 + 1, jhint);
+        (*env)->DeleteLocalRef(env, jval);
+        (*env)->DeleteLocalRef(env, jhint);
+    }
+
+    jobject jobj = java_get_obj(L, 2);
+    jobject task = (*env)->NewObject(env, taskCls, ctor, (jint)pid, jobj, jmtd, jargs);
+    (*env)->DeleteLocalRef(env, jmtd);
+    (*env)->DeleteLocalRef(env, jargs);
+    (*env)->DeleteLocalRef(env, taskCls);
+
+    jclass agentCls = (*env)->FindClass(env, "com/luajava/LuaAgent");
+    jmethodID submitMid = (*env)->GetStaticMethodID(env, agentCls, "submitTask", "(Lcom/luajava/AgentTask;)V");
+    if (submitMid) (*env)->CallStaticVoidMethod(env, agentCls, submitMid, task);
+    (*env)->DeleteLocalRef(env, task);
+    (*env)->DeleteLocalRef(env, agentCls);
+    return 0;
+}
+
 int java_checkPromise(lua_State* L) {
     int id = (int)luaL_checkinteger(L, 1);
     pthread_mutex_lock(&promise_mutex);

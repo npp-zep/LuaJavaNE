@@ -4,10 +4,27 @@ import java.lang.reflect.*;
 
 public class AsyncRunner {
     public static String runStatic(String className, String methodName, String[] args) {
+        return runMethod(className, null, methodName, args);
+    }
+
+    public static String runInstance(Object instance, String methodName, String[] args) {
+        if (instance == null) return "E:null instance";
+        return runMethod(instance.getClass().getName(), instance, methodName, args);
+    }
+
+    private static String runMethod(String className, Object obj, String methodName, String[] args) {
         try {
-            Class<?> cls = Class.forName(className);
-            if (methodName.equals("new")) return callConstructor(cls, args);
-            return callMethod(cls, null, methodName, args);
+            Class<?> cls = obj != null ? obj.getClass() : Class.forName(className);
+            if (methodName.equals("new") && obj == null) return callConstructor(cls, args);
+            for (Method m : cls.getMethods()) {
+                if (!m.getName().equals(methodName)) continue;
+                Object[] cv = matchArgs(m.getParameterTypes(), args);
+                if (cv != null) {
+                    try { return serialize(m.invoke(obj, cv)); }
+                    catch (InvocationTargetException e) { return "E:" + e.getCause(); }
+                }
+            }
+            return "E:no matching method: " + methodName;
         } catch (Throwable e) {
             return "E:" + e.toString();
         }
@@ -24,17 +41,6 @@ public class AsyncRunner {
         return "E:no matching constructor";
     }
 
-    private static String callMethod(Class<?> cls, Object obj, String name, String[] args) throws Exception {
-        for (Method m : cls.getMethods()) {
-            if (!m.getName().equals(name)) continue;
-            Object[] cv = matchArgs(m.getParameterTypes(), args);
-            if (cv != null) {
-                try { return serialize(m.invoke(obj, cv)); }
-                catch (InvocationTargetException e) { return "E:" + e.getCause(); }
-            }
-        }
-        return "E:no matching method: " + name;
-    }
 
     private static Object[] matchArgs(Class<?>[] pt, String[] pairs) {
         if (pt.length == 0 && pairs.length == 0) return new Object[0];
@@ -44,9 +50,7 @@ public class AsyncRunner {
             try {
                 r[i] = convert(pairs[i*2], pairs[i*2+1], pt[i]);
                 if (r[i] == null) return null;
-            } catch (Exception e) {
-                return null;
-            }
+            } catch (Exception e) { return null; }
         }
         return r;
     }

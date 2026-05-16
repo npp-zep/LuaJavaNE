@@ -10,6 +10,7 @@
 
 extern JNIEnv* getEnv();
 extern int java_runAsync(lua_State* L);
+extern int java_runAsyncObj(lua_State* L);
 extern int java_checkPromise(lua_State* L);
 
 typedef struct {
@@ -1026,6 +1027,7 @@ static const luaL_Reg javalib[] = {
     {"deleteStore", java_deleteStore},
     {"__agent_exec", java_agent_exec},
     {"runAsync",    java_runAsync},
+    {"runAsyncObj", java_runAsyncObj},
     {"checkPromise", java_checkPromise},
     {NULL, NULL}
 };
@@ -1035,4 +1037,9 @@ int luaopen_java(lua_State* L) {
     create_metatables(L);
     luaL_newlib(L, javalib);
     return 1;
+}
+// 供 lualib_async.c 使用的辅助函数
+jobject java_get_obj(lua_State* L, int idx) {
+    JavaUserdata* ud = (JavaUserdata*)luaL_checkudata(L, idx, JAVAOBJECT_META);
+    return ud ? ud->obj : NULL;
 }
