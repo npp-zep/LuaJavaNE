@@ -39,7 +39,7 @@ public class LuaRuntime {
     }
 
     public void doString(String script) { _doString(statePtr, script); }
-    public void close() { if (statePtr != 0) { _close(statePtr); statePtr = 0; } }
+    public void close() { if (statePtr != 0) { LuaAgent.shutdown(); _close(statePtr); statePtr = 0; } }
     public void setGlobal(String name, String value) { _setGlobal(statePtr, name, value); }
     public String getGlobal(String name) { return _getGlobal(statePtr, name); }
     public Object callFunction(String name, Object... args) {
