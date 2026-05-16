@@ -168,6 +168,7 @@ int java_checkPromise(lua_State* L) {
                     case 'I': lua_pushinteger(L, atoll(r + 2)); break;
                     case 'N': lua_pushnumber(L, atof(r + 2)); break;
                     case 'B': lua_pushboolean(L, (r[2] == 't' || r[2] == '1')); break;
+                    case 'O': lua_pushstring(L, r + 2); break;
                     case 'E': lua_pushstring(L, r + 2); break;
                     default:  lua_pushnil(L); break;
                 }
