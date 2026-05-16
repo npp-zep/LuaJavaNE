@@ -9,7 +9,7 @@ public class LuaAgent {
     private static final AtomicInteger objectIdCounter = new AtomicInteger(1);
 
     public static void init() {
-        if (executor == null) {
+        if (executor == null || executor.isShutdown()) {
             int n = Runtime.getRuntime().availableProcessors();
             ThreadFactory daemonFactory = r -> {
                 Thread t = new Thread(r);
@@ -32,14 +32,12 @@ public class LuaAgent {
         });
     }
 
-    /** 注册异步创建的对象，返回唯一 ID */
     public static int registerObject(Object obj) {
         int id = objectIdCounter.getAndIncrement();
         objectRegistry.put(id, obj);
         return id;
     }
 
-    /** 根据 ID 获取对象（主线程调用） */
     public static Object getObject(int id) {
         return objectRegistry.get(id);
     }

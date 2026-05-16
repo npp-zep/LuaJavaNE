@@ -21,10 +21,6 @@ all: $(BUILD_DIR)/luajava.so $(OUT_DIR)
 	javac -d $(OUT_DIR) -cp $(JLINE_JAR) $(SRC_DIR)/*.java
 	jar cf luajava.jar -C $(OUT_DIR) .
 	javac -d $(OUT_DIR) -cp $(JLINE_JAR) $(SRC_DIR)/AsyncRunner.java
-	jar cf luajava.jar -C $(OUT_DIR) .
-	jar uf luajava.jar -C $(OUT_DIR) com/luajava/AsyncRunner.class
-	@echo "Build complete. Run './luaj.sh' to start."
-
 # C 编译（委托给 CMake）
 $(BUILD_DIR)/luajava.so: $(JNI_DIR)/luajava.c $(LUA_DIR)/lualibjava.c $(LUA_DIR)/lualib_async.c
 	@mkdir -p $(BUILD_DIR)
@@ -50,7 +46,7 @@ test: junit
 	     -cp $(CP):$(JUNIT_JAR) \
 	     org.junit.platform.console.ConsoleLauncher \
 	     --select-class=com.luajava.AllTests \
-	     --select-class=com.luajava.PromiseTest
+	     --select-class=com.luajava.PromiseTest --select-class=com.luajava.AsyncTest
 	@echo ""
 	@echo "All JUnit tests passed."
 
