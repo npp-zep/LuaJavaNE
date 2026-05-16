@@ -1,4 +1,3 @@
-
 ![Lua](https://img.shields.io/badge/Lua-5.4.8-blue) ![Java](https://img.shields.io/badge/Java-17%2B-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
 # LuaJavaNE
@@ -7,29 +6,27 @@
 
 ---
 
-## 📑 目录 {#table-of-contents}
+## 📑 目录
 
-- [快速开始](#getting-started)
+- [快速开始](#quick-start)
 - [特性](#features)
 - [API 参考](#api-reference)
-  - [Java 调用 Lua](#java-calling-lua)
-  - [Lua 调用 Java](#lua-calling-java)
-  - [注解绑定](#annotation-binding)
+  - [Java 调用 Lua](#java-call-lua)
+  - [Lua 调用 Java](#lua-call-java)
+  - [注解绑定](#annotation-bind)
   - [动态代理](#dynamic-proxy)
-  - [数组操作](#array-operations)
-  - [高性能缓存 `store/fetch`](#high-performance-storefetch)
-  - [Agent 异步框架](#agent-async-framework)
-  - [Clac 数学加速库](#clac-math-library)
+  - [数组操作](#array-ops)
+  - [高性能缓存 store/fetch](#store-fetch)
+  - [Agent 异步框架](#agent-async)
+  - [Clac 数学加速库](#clac-math)
 - [性能对比](#performance)
-- [构建与测试](#build-and-test)
+- [构建与测试](#build-test)
 - [架构概览](#architecture)
-- [已知限制](#known-limitations)
+- [已知限制](#limitations)
 - [贡献](#contributing)
 - [许可证](#license)
 
----
-
-## 🚀 快速开始 {#getting-started}
+## 🚀 快速开始 {#quick-start}
 
 ### 从源码构建
 
@@ -71,8 +68,6 @@ Ctrl+D 退出 REPL
 \q 退出 REPL
 = 1+2 打印表达式结果
 
----
-
 ✨ 特性
 
 · 双向互调：Java 执行 Lua 脚本，Lua 调用 Java 类库，无缝集成。
@@ -82,8 +77,6 @@ Ctrl+D 退出 REPL
 · 注解绑定：@LuaModule / @LuaFunction 自动将 Java 模块暴露给 Lua。
 · 动态代理：Lua 表实现 Java 接口，作为回调传给 Java。
 · 类型自动映射：Lua ↔ Java 基本类型自动转换，支持多返回值。
-
----
 
 📖 API 参考
 
@@ -231,8 +224,6 @@ local c = clac.batch_add(a, b)   -- 比 Lua 表循环快 83 倍
 local s = clac.batch_sin(a)      -- 批量正弦
 ```
 
----
-
 ⚡ 性能对比
 
 测试项 耗时 倍数
@@ -240,8 +231,6 @@ local s = clac.batch_sin(a)      -- 批量正弦
 10000×100 ClacArray batch_add 0.005s 83x faster
 50 并发 Thread.sleep(10ms) 0.05s -
 100 次异步调用 0.43s -
-
----
 
 🔧 构建与测试
 
@@ -278,8 +267,6 @@ LuaJavaNE/
 └── luaj.sh            # 启动脚本
 ```
 
----
-
 🏗 架构概览
 
 ```
@@ -295,8 +282,6 @@ Lua 5.4.8 内核
 · 高性能路径：store/fetch 直接读写 C 链表；ClacArray 在 C 内存中完成批量运算。
 · 线程约束：所有 Lua 执行必须在主线程。异步任务通过 Java 线程池执行纯 Java 方法，结果写入 C 链表，主线程轮询。
 
----
-
 ⚠️ 已知限制
 
 · 异步方法目前仅支持单个参数（多参数将在后续版本支持）
@@ -305,8 +290,6 @@ Lua 5.4.8 内核
 · LuaRuntime.compile() 在 x86_64 Linux 上可能崩溃（ARM64 正常）
 · 代理对象直接 print() 可能段错误，用 tostring(proxy) 替代
 · 类型 long / float / byte / char 暂不完全支持
-
----
 
 🤝 贡献
 
@@ -323,11 +306,9 @@ git push origin feature/my-feature
 # 在 GitHub 上提 Pull Request
 ```
 
----
-
 📄 许可证
 
 MIT。本项目包含 Lua 5.4.8 (MIT)、JLine 3 (BSD-3)、JUnit 5 (EPL-1.0)。
+
 ---
 
-```
