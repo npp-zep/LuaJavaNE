@@ -17,22 +17,6 @@ JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaRuntime_callFunctionMultiple
 
 /*
  * Class:     com_luajava_LuaRuntime
- * Method:    bindJavaMethod
- * Signature: (Ljava/lang/String;Ljava/lang/Object;Ljava/lang/String;[Ljava/lang/Class;)V
- */
-JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime_bindJavaMethod
-  (JNIEnv *, jobject, jstring, jobject, jstring, jobjectArray);
-
-/*
- * Class:     com_luajava_LuaRuntime
- * Method:    _registerCallback
- * Signature: (JLjava/lang/String;Lcom/luajava/LuaJavaCallback;)V
- */
-JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1registerCallback
-  (JNIEnv *, jobject, jlong, jstring, jobject);
-
-/*
- * Class:     com_luajava_LuaRuntime
  * Method:    _newState
  * Signature: ()J
  */
@@ -86,6 +70,14 @@ JNIEXPORT jint JNICALL Java_com_luajava_LuaRuntime__1compile
  */
 JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1doFile
   (JNIEnv *, jobject, jlong, jstring);
+
+/*
+ * Class:     com_luajava_LuaRuntime
+ * Method:    _registerCallback
+ * Signature: (JLjava/lang/String;Lcom/luajava/LuaJavaCallback;)V
+ */
+JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1registerCallback
+  (JNIEnv *, jobject, jlong, jstring, jobject);
 
 #ifdef __cplusplus
 }
