@@ -1,0 +1,4 @@
+/data/data/com.termux/files/home/proj/LuaJavaNE/build_ninja/CMakeFiles/lua.dir
+/data/data/com.termux/files/home/proj/LuaJavaNE/build_ninja/CMakeFiles/luajava.dir
+/data/data/com.termux/files/home/proj/LuaJavaNE/build_ninja/CMakeFiles/edit_cache.dir
+/data/data/com.termux/files/home/proj/LuaJavaNE/build_ninja/CMakeFiles/rebuild_cache.dir

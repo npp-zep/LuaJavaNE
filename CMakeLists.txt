@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.14)
-project(LuaJavaNE VERSION 1.0 LANGUAGES C)
+project(LuaJavaNE VERSION 2.1 LANGUAGES C)
 
 # ========== 1. Lua 5.4.8 源码 ==========
-set(LUA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Lua5.4.8")
+set(LUA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lua/lua-5.4.8/src")
+set(NATIVE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/native")
 
 file(GLOB LUA_CORE_SRCS
     "${LUA_DIR}/lapi.c"
@@ -39,37 +40,31 @@ file(GLOB LUA_CORE_SRCS
     "${LUA_DIR}/lzio.c"
 )
 
-
 add_library(lua STATIC ${LUA_CORE_SRCS})
 target_include_directories(lua PUBLIC "${LUA_DIR}")
-
-# 强制生成位置无关代码（ARM64 必须）
 set_target_properties(lua PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(UNIX AND NOT APPLE)
     target_link_libraries(lua PUBLIC m)
 endif()
 
-target_compile_definitions(lua PRIVATE
-    LUA_USE_LINUX    # Termux 是 Linux；macOS 换成 LUA_USE_MACOSX
-)
+target_compile_definitions(lua PRIVATE LUA_USE_LINUX)
 
 # ========== 2. 查找 JNI ==========
 find_package(JNI REQUIRED)
 include_directories(${JNI_INCLUDE_DIRS})
 
 # ========== 3. JNI 桥接库 ==========
-set(JNI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/jni")
-
 add_library(luajava SHARED
-    "${JNI_DIR}/luajava.c"
-    "${LUA_DIR}/lualibjava.c"    # 直接编译进 .so，暴露 promise_registry
-    "${LUA_DIR}/lualib_async.c"  # 直接编译进 .so，引用 promise_registry
-    "${LUA_DIR}/lualib_clac.c"
+    "${NATIVE_DIR}/jni/luajava.c"
+    "${NATIVE_DIR}/lualib/lualibjava.c"
+    "${NATIVE_DIR}/lualib/lualib_async.c"
+    "${NATIVE_DIR}/lualib/lualib_clac.c"
 )
 
 target_include_directories(luajava PRIVATE
-    "${JNI_DIR}"
+    "${NATIVE_DIR}/jni"
+    "${NATIVE_DIR}/lualib"
     "${LUA_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/src_jni"
     ${JNI_INCLUDE_DIRS}
@@ -80,14 +75,5 @@ target_link_libraries(luajava PRIVATE lua ${JNI_LIBRARIES})
 set_target_properties(luajava PROPERTIES
     PREFIX ""
     OUTPUT_NAME "luajava"
+    SUFFIX ".so"
 )
-
-if(APPLE)
-    set_target_properties(luajava PROPERTIES SUFFIX ".dylib")
-    target_compile_definitions(lua PRIVATE LUA_USE_MACOSX)
-elseif(WIN32)
-    set_target_properties(luajava PROPERTIES SUFFIX ".dll")
-    target_compile_definitions(lua PRIVATE LUA_USE_WINDOWS)
-else()
-    set_target_properties(luajava PROPERTIES SUFFIX ".so")
-endif()

@@ -6,3 +6,4 @@ luajava.jar
 *.dll
 .DS_Store
 err.txt
+test_*.lua
