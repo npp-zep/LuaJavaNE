@@ -25,12 +25,10 @@ $(OUT_DIR):
 
 junit: all
 	@echo "Compiling test classes..."
-	mkdir -p $(TEST_DIR)
-	javac -d $(OUT_DIR) -cp $(OUT_DIR):$(JLINE_JAR):$(JUNIT_JAR) test/AsyncTest.java test/AllTests.java test/BaseTest.java test/PromiseTest.java 2>/dev/null || \
-	javac -d $(OUT_DIR) -cp $(OUT_DIR):$(JLINE_JAR):$(JUNIT_JAR) $(TEST_DIR)/*.java
+	javac -d $(OUT_DIR) -cp $(OUT_DIR):$(JLINE_JAR):$(JUNIT_JAR) test/*.java
 	@echo "Test classes compiled."
 
-test: junit
+test:
 	@echo "Running JUnit tests..."
 	java -Dluajava.library.path=$(SO_PATH) \
 	     -cp $(OUT_DIR):$(JLINE_JAR):$(JUNIT_JAR) \

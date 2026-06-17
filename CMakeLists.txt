@@ -66,7 +66,7 @@ target_include_directories(luajava PRIVATE
     "${NATIVE_DIR}/jni"
     "${NATIVE_DIR}/lualib"
     "${LUA_DIR}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src_jni"
+    "${CMAKE_CURRENT_SOURCE_DIR}/native/jni"
     ${JNI_INCLUDE_DIRS}
 )
 
