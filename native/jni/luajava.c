@@ -1,6 +1,7 @@
 // jni/luajava.c
 #include "luajava.h"
 extern int luaopen_java(lua_State* L);
+extern void lua_open_custom_libs(lua_State* L);
 #include "com_luajava_LuaRuntime.h"
 #include "com_luajava_LuaFunctionObj.h"
 #include "com_luajava_LuaInvocationHandler.h"
@@ -136,6 +137,7 @@ JNIEXPORT jlong JNICALL Java_com_luajava_LuaRuntime__1newState(JNIEnv* env, jcla
         luaL_requiref(L, "_G", luaopen_base, 1);
         lua_pop(L, 1);
         luaL_openlibs(L);
+    lua_open_custom_libs(L);
         lua_pushstring(L, "luajava_stateptr");
         lua_pushinteger(L, (lua_Integer)(uintptr_t)L);
         lua_settable(L, LUA_REGISTRYINDEX);

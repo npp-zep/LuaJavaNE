@@ -11,3 +11,11 @@ build/
 out/
 luajava.jar
 *.class
+build_ninja/
+build/
+out/
+luajava.jar
+*.class
+native/lualib/patches/
+test_fea.lua
+test_lua.lua

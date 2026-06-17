@@ -34,7 +34,7 @@
 #include "lualib.h"
 #include "lauxlib.h"
 
-extern int luaopen_java(lua_State* L);
+
 /*
 ** these libs are loaded by lua.c and are readily available to any Lua
 ** program
@@ -49,8 +49,6 @@ static const luaL_Reg loadedlibs[] = {
   {LUA_STRLIBNAME, luaopen_string},
   {LUA_MATHLIBNAME, luaopen_math},
   {LUA_UTF8LIBNAME, luaopen_utf8},
-  {"clac", luaopen_clac},
-  {"java", luaopen_java},
   {LUA_DBLIBNAME, luaopen_debug},
   {NULL, NULL}
 };
