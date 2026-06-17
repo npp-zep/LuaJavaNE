@@ -4,7 +4,7 @@ BUILD_DIR = build
 OUT_DIR = out
 LIB_DIR = lib
 JAVA_SRC = java/src/com/luajava
-TEST_DIR = test/com/luajava
+TEST_SRC = test
 
 JLINE_JAR = $(LIB_DIR)/jline.jar
 JUNIT_JAR = $(LIB_DIR)/junit-standalone.jar
@@ -25,10 +25,10 @@ $(OUT_DIR):
 
 junit: all
 	@echo "Compiling test classes..."
-	javac -d $(OUT_DIR) -cp $(OUT_DIR):$(JLINE_JAR):$(JUNIT_JAR) test/*.java
+	javac -d $(OUT_DIR) -cp $(OUT_DIR):$(JLINE_JAR):$(JUNIT_JAR) $(TEST_SRC)/*.java
 	@echo "Test classes compiled."
 
-test:
+test: junit
 	@echo "Running JUnit tests..."
 	java -Dluajava.library.path=$(SO_PATH) \
 	     -cp $(OUT_DIR):$(JLINE_JAR):$(JUNIT_JAR) \
@@ -36,17 +36,19 @@ test:
 	     --select-class=com.luajava.AllTests \
 	     --select-class=com.luajava.PromiseTest \
 	     --select-class=com.luajava.AsyncTest
+	@echo ""
 	@echo "All JUnit tests passed."
 
 repl: all
 	@./luaj.sh
 
 ninja:
-	@mkdir -p $(BUILD_DIR) $(OUT_DIR)
+	@mkdir -p $(OUT_DIR)
 	javac -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/*.java
 	jar cf luajava.jar -C $(OUT_DIR) .
 	@mkdir -p build_ninja
 	@cd build_ninja && cmake -G Ninja .. && ninja
+	@mkdir -p $(BUILD_DIR)
 	@cp build_ninja/luajava.so $(BUILD_DIR)/luajava.so
 	@echo "Ninja build + Java complete."
 
