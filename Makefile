@@ -1,4 +1,4 @@
-.PHONY: all clean test junit repl ninja
+.PHONY: all clean test junit repl ninja release
 
 BUILD_DIR = build
 OUT_DIR = out
@@ -52,6 +52,16 @@ ninja:
 	@cp build_ninja/luajava.so $(BUILD_DIR)/luajava.so
 	@echo "Ninja build + Java complete."
 
+release: clean all
+	@echo "Packaging release..."
+	@mkdir -p release
+	cp build/luajava.so release/luajava.so 2>/dev/null || cp build_ninja/luajava.so release/luajava.so
+	cp luajava.jar release/
+	cp luaj.sh release/
+	cp -r examples release/
+	cp -r docs release/
+	@echo "Release files are in ./release/"
+
 clean:
-	@rm -rf $(BUILD_DIR) $(OUT_DIR) build_ninja luajava.jar
+	@rm -rf $(BUILD_DIR) $(OUT_DIR) build_ninja luajava.jar release
 	@echo "Cleaned."
