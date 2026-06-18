@@ -382,9 +382,16 @@ JNIEXPORT jobject JNICALL Java_com_luajava_LuaInvocationHandler_invoke
     jint ref = (*env)->GetIntField(env, obj, rf);
     (*env)->DeleteLocalRef(env, cls);
 
+    if (ref < 0) {
+        LUA_UNLOCK();
+        (*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalStateException"),
+                         "Handler already destroyed");
+        return NULL;
+    }
+
     lua_State* L = (lua_State*)(uintptr_t)Lptr;
 
-    // 获取返回类型
+    // 获取返回类型和名称（优化：缓存可提高性能）
     jclass methodCls = (*env)->GetObjectClass(env, method);
     jmethodID getRt = (*env)->GetMethodID(env, methodCls, "getReturnType", "()Ljava/lang/Class;");
     jobject rt = (*env)->CallObjectMethod(env, method, getRt);
@@ -397,22 +404,25 @@ JNIEXPORT jobject JNICALL Java_com_luajava_LuaInvocationHandler_invoke
     (*env)->DeleteLocalRef(env, rtName);
     (*env)->DeleteLocalRef(env, rtCls);
     (*env)->DeleteLocalRef(env, rt);
-    (*env)->DeleteLocalRef(env, methodCls);
 
-    // 获取方法名
     jmethodID getNameMid = (*env)->GetMethodID(env, methodCls, "getName", "()Ljava/lang/String;");
     jstring jname = (jstring)(*env)->CallObjectMethod(env, method, getNameMid);
     const char* name = (*env)->GetStringUTFChars(env, jname, NULL);
+    (*env)->DeleteLocalRef(env, methodCls);
 
+    // 从注册表获取 Lua 表
     lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
         (*env)->ReleaseStringUTFChars(env, jname, name);
         (*env)->DeleteLocalRef(env, jname);
         LUA_UNLOCK();
+        (*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/RuntimeException"),
+                         "Lua table reference is invalid");
         return NULL;
     }
 
+    // 获取方法
     lua_getfield(L, -1, name);
     (*env)->ReleaseStringUTFChars(env, jname, name);
     (*env)->DeleteLocalRef(env, jname);
@@ -420,25 +430,32 @@ JNIEXPORT jobject JNICALL Java_com_luajava_LuaInvocationHandler_invoke
     if (!lua_isfunction(L, -1)) {
         lua_pop(L, 2);
         LUA_UNLOCK();
+        char buf[256];
+        snprintf(buf, sizeof(buf), "Method '%s' not implemented in Lua table", name);
+        (*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/NoSuchMethodError"), buf);
         return NULL;
     }
 
-    lua_pushvalue(L, -2); // self
+    // 压入 self（表自身）
+    lua_pushvalue(L, -2);
 
-    int nargs = 1;
+    // 压入参数
+    int nargs = 1;  // self
     if (args) {
-        nargs += (*env)->GetArrayLength(env, args);
-        for (int i = 0; i < nargs - 1; i++) {
+        int len = (*env)->GetArrayLength(env, args);
+        for (int i = 0; i < len; i++) {
             jobject arg = (*env)->GetObjectArrayElement(env, args, i);
             push_java_arg(L, env, arg);
             if (arg) (*env)->DeleteLocalRef(env, arg);
+            nargs++;
         }
     }
 
+    // 调用
     int err = lua_pcall(L, nargs, isVoid ? 0 : 1, 0);
     if (err != LUA_OK) {
         const char* msg = lua_tostring(L, -1);
-        lua_pop(L, lua_gettop(L));
+        lua_pop(L, 1);
         LUA_UNLOCK();
         (*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/RuntimeException"),
                          msg ? msg : "Lua error in proxy handler");
@@ -458,6 +475,23 @@ JNIEXPORT jobject JNICALL Java_com_luajava_LuaInvocationHandler_invoke
 }
 
 
+JNIEXPORT void JNICALL Java_com_luajava_LuaInvocationHandler_destroy
+  (JNIEnv* env, jobject obj) {
+    LUA_LOCK();
+    jclass cls = (*env)->GetObjectClass(env, obj);
+    jfieldID sf = (*env)->GetFieldID(env, cls, "statePtr", "J");
+    jfieldID rf = (*env)->GetFieldID(env, cls, "tableRef", "I");
+    jlong Lptr = (*env)->GetLongField(env, obj, sf);
+    jint ref = (*env)->GetIntField(env, obj, rf);
+    (*env)->DeleteLocalRef(env, cls);
+
+    if (Lptr != 0 && ref >= 0) {
+        lua_State* L = (lua_State*)(uintptr_t)Lptr;
+        luaL_unref(L, LUA_REGISTRYINDEX, ref);
+        (*env)->SetIntField(env, obj, rf, -1);
+    }
+    LUA_UNLOCK();
+}
 
 
 // ========== 存储 Java 方法回调的结构 ==========

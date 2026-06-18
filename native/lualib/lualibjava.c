@@ -174,7 +174,7 @@ static void get_possible_arg_types(char c, char** options, int* count) {
     static char stringOptions[2][32] = {"Ljava/lang/String;","Ljava/lang/Object;"};
     static char boolOptions[2][32]   = {"Z","Ljava/lang/Object;"};
     static char objOptions[1][32]    = {"Ljava/lang/Object;"};
-    static char* optPtrs[3];
+    static char* optPtrs[4];
     switch (c) {
         case 'I': optPtrs[0]=intOptions[0];optPtrs[1]=intOptions[1];optPtrs[2]=intOptions[2];optPtrs[3]=intOptions[3];*options=(char*)optPtrs;*count=4;break;
         case 'D': optPtrs[0]=doubleOptions[0];optPtrs[1]=doubleOptions[1];*options=(char*)optPtrs;*count=2;break;

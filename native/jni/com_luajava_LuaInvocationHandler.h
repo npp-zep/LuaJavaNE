@@ -7,13 +7,22 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
 /*
  * Class:     com_luajava_LuaInvocationHandler
- * Method:    invoke
+ * Method:    invokeNative
  * Signature: (Ljava/lang/Object;Ljava/lang/reflect/Method;[Ljava/lang/Object;)Ljava/lang/Object;
  */
-JNIEXPORT jobject JNICALL Java_com_luajava_LuaInvocationHandler_invoke
+JNIEXPORT jobject JNICALL Java_com_luajava_LuaInvocationHandler_invokeNative
   (JNIEnv *, jobject, jobject, jobject, jobjectArray);
+
+/*
+ * Class:     com_luajava_LuaInvocationHandler
+ * Method:    destroyNative
+ * Signature: ()V
+ */
+JNIEXPORT void JNICALL Java_com_luajava_LuaInvocationHandler_destroyNative
+  (JNIEnv *, jobject);
 
 #ifdef __cplusplus
 }

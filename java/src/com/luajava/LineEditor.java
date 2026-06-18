@@ -6,6 +6,8 @@ import org.jline.reader.*;
 
 public class LineEditor {
     private LineReader reader;
+    private BufferedReader fallbackReader;
+    private boolean useFallback;
 
     public LineEditor() {
         try {
@@ -22,12 +24,24 @@ public class LineEditor {
                 .variable(LineReader.HISTORY_SIZE, 1000)
                 .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
                 .build();
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to initialize JLine terminal", e);
+            useFallback = false;
+        } catch (Exception e) {
+            // JLine不可用（例如非TTY环境），优雅降级到标准输入
+            System.err.println("Warning: JLine terminal unavailable, using fallback input: " + e.getMessage());
+            useFallback = true;
+            fallbackReader = new BufferedReader(new InputStreamReader(System.in));
         }
     }
 
     public String readLine(String prompt) throws IOException {
-        return reader.readLine(prompt);
+        if (useFallback) {
+            if (prompt != null && !prompt.isEmpty()) {
+                System.out.print(prompt);
+                System.out.flush();
+            }
+            return fallbackReader.readLine();
+        } else {
+            return reader.readLine(prompt);
+        }
     }
 }
