@@ -41,13 +41,8 @@ public class AsyncTest extends BaseTest {
         L.doString("s = String:new('a,b,c')");
         L.doString("id = java.promise()");
         L.doString("java.runAsyncObj(id, s, 'split', ',')");
-        L.doString(
-            "repeat\n" +
-            "    local done, a, b, c = java.checkPromise(id)\n" +
-            "    _done = tostring(done)\n" +
-            "    _a, _b, _c = a, b, c\n" +
-            "until _done == 'true'"
-        );
+        L.doString("repeat _res = {java.checkPromise(id)}; _done = tostring(_res[1]) until _done == 'true'");
+        L.doString("_a = tostring(_res[2]); _b = tostring(_res[3]); _c = tostring(_res[4])");
         assertEquals("true", L.getGlobal("_done"));
         assertEquals("a", L.getGlobal("_a"));
         assertEquals("b", L.getGlobal("_b"));
@@ -76,10 +71,8 @@ public class AsyncTest extends BaseTest {
         L.doString("ids = {}");
         L.doString("for i = 1, " + N + " do ids[i] = java.promise() end");
         L.doString("for i = 1, " + N + " do java.runAsync(ids[i], 'java.lang.Thread', 'sleep', '10') end");
-        Thread.sleep(800);
-        for (int i = 1; i <= N; i++) {
-            L.doString("repeat done = java.checkPromise(ids[" + i + "]) until done");
-        }
+        // 用 Lua 侧轮询，不用 Java sleep
+        L.doString("for i = 1, " + N + " do repeat done = java.checkPromise(ids[i]) until done end");
         assertTrue(true);
     }
 
