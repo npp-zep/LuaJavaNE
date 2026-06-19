@@ -72,4 +72,6 @@ JAVA_OPTS="$JAVA_OPTS -Dluajava.lua.cpath=$LUA_CPATH"
 JAVA_OPTS="$JAVA_OPTS -Dluajava.lua.path=$LUA_PATH"
 # ===== 跨平台路径检测结束 =====
 
-java $JAVA_OPTS -cp "$JAR_PATH:$JLINE_PATH" com.luajava.LuaJMain "$@"
+# 预加载 luajava.so 以提供 Lua C API 符号给外部 .so 扩展
+LD_PRELOAD="$SO_PATH" \
+LD_PRELOAD="$SO_PATH:$LD_PRELOAD" java $JAVA_OPTS -cp "$JAR_PATH:$JLINE_PATH" com.luajava.LuaJMain "$@"
