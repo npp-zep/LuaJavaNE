@@ -10,7 +10,16 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: macos-13
+            arch: x86_64
+          - os: macos-latest
+            arch: arm64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -26,19 +35,45 @@ jobs:
           wget -q https://repo1.maven.org/maven2/org/jline/jline/3.25.1/jline-3.25.1.jar -O lib/jline.jar
 
       - name: Build Release
-        run: make release
+        run: |
+          make clean && make
+          mkdir -p release/lib release/docs release/examples
+          cp build/luajava.so release/luajava.so
+          cp luajava.jar release/
+          cp luaj.sh release/
+          cp lib/jline.jar release/lib/
+          cp -r examples/* release/examples/
+          cp -r docs/* release/docs/
 
       - name: Create Release Archive
         run: |
           cd release
-          tar czf ../luajavane-${{ github.ref_name }}-linux-x86_64.tar.gz *
+          tar czf ../luajavane-${{ github.ref_name }}-${{ runner.os }}-${{ matrix.arch }}.tar.gz *
 
-      - name: Upload Release
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: luajavane-${{ runner.os }}-${{ matrix.arch }}
+          path: |
+            luajavane-*.tar.gz
+            release/luajava.jar
+            release/luajava.so
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish Release
         run: |
-          gh release create ${{ github.ref_name }} \
-            luajavane-${{ github.ref_name }}-linux-x86_64.tar.gz \
-            release/luajava.jar \
-            release/luajava.so \
+          ASSETS=""
+          for f in artifacts/*/*.tar.gz artifacts/*/luajava.jar artifacts/*/luajava.so; do
+            [ -f "$f" ] && ASSETS="$ASSETS $f"
+          done
+          gh release create ${{ github.ref_name }} $ASSETS \
             --title "LuaJavaNE ${{ github.ref_name }}" \
             --generate-notes
         env:
