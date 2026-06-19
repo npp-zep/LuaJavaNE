@@ -70,6 +70,16 @@ detect_lua_paths
 
 JAVA_OPTS="$JAVA_OPTS -Dluajava.lua.cpath=$LUA_CPATH"
 JAVA_OPTS="$JAVA_OPTS -Dluajava.lua.path=$LUA_PATH"
+# 读取版本配置
+if [ -f "$SCRIPT_DIR/version.properties" ]; then
+    . "$SCRIPT_DIR/version.properties"
+    JAVA_OPTS="$JAVA_OPTS -Dluajava.version=$PROJECT_VERSION"
+    JAVA_OPTS="$JAVA_OPTS -Dluajava.name=$PROJECT_NAME"
+    JAVA_OPTS="$JAVA_OPTS -Dluajava.copyright=$PROJECT_COPYRIGHT"
+    JAVA_OPTS="$JAVA_OPTS -Dluajava.license=$PROJECT_LICENSE"
+    JAVA_OPTS="$JAVA_OPTS -Dluajava.url=$PROJECT_URL"
+fi
+
 # ===== 跨平台路径检测结束 =====
 
 # 预加载 luajava.so 以提供 Lua C API 符号给外部 .so 扩展
