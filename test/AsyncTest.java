@@ -66,13 +66,13 @@ public class AsyncTest extends BaseTest {
     }
 
     @Test
-    void asyncConcurrent() throws InterruptedException {
+    void asyncConcurrent() {
         int N = 10;
+        L.doString("Thread = java.import('java.lang.Thread')");
         L.doString("ids = {}");
         L.doString("for i = 1, " + N + " do ids[i] = java.promise() end");
         L.doString("for i = 1, " + N + " do java.runAsync(ids[i], 'java.lang.Thread', 'sleep', '10') end");
-        // 用 Lua 侧轮询，不用 Java sleep
-        L.doString("for i = 1, " + N + " do repeat done = java.checkPromise(ids[i]) until done end");
+        L.doString("for i = 1, " + N + " do while true do local done = java.checkPromise(ids[i]); if done then break end; Thread.sleep(10) end end");
         assertTrue(true);
     }
 
