@@ -31,9 +31,4 @@ jobs:
         run: make
 
       - name: Run tests
-        run: |
-          javac -cp out:lib/junit-standalone.jar -d test test/*.java
-          java -Dluajava.library.path=$PWD/build/luajava.so \
-               -jar lib/junit-standalone.jar \
-               --class-path out:test \
-               --select-class com.luajava.AllTests
+        run: make test

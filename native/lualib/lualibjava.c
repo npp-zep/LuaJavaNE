@@ -434,9 +434,69 @@ static int method_lookup_call(lua_State* L) {
     char returnType = 'O';
     jmethodID method = try_find_method(env, cls, ml->methodName, L, firstArgIdx, nargs, &returnType, ml->isStatic);
     if (!method) {
+        // JNI GetMethodID 失败，用 Java 反射 fallback
+        jclass runnerCls = (*env)->FindClass(env, "com/luajava/AsyncRunner");
+        if (runnerCls) {
+            jmethodID invokeMid = (*env)->GetStaticMethodID(env, runnerCls, "invokeInstance",
+                "(Ljava/lang/Object;Ljava/lang/String;[Ljava/lang/String;)Ljava/lang/String;");
+            if (invokeMid) {
+                jstring jname = (*env)->NewStringUTF(env, ml->methodName);
+                jclass strCls = (*env)->FindClass(env, "java/lang/String");
+                jobjectArray jargs = (*env)->NewObjectArray(env, nargs * 2, strCls, NULL);
+                for (int i = 0; i < nargs; i++) {
+                    const char* val = lua_tostring(L, firstArgIdx + i);
+                    char hint = get_java_type_char(L, firstArgIdx + i);
+                    char hintStr[2] = { hint, 0 };
+                    jstring jval = (*env)->NewStringUTF(env, val ? val : "");
+                    jstring jhint = (*env)->NewStringUTF(env, hintStr);
+                    (*env)->SetObjectArrayElement(env, jargs, i * 2, jval);
+                    (*env)->SetObjectArrayElement(env, jargs, i * 2 + 1, jhint);
+                    (*env)->DeleteLocalRef(env, jval);
+                    (*env)->DeleteLocalRef(env, jhint);
+                }
+                jstring jresult = (jstring)(*env)->CallStaticObjectMethod(env, runnerCls, invokeMid,
+                    ml->obj, jname, jargs);
+                if (jresult) {
+                    const char* s = (*env)->GetStringUTFChars(env, jresult, NULL);
+                    if (s[0] == 'S') lua_pushstring(L, s + 2);
+                    else if (s[0] == 'I') lua_pushinteger(L, atoll(s + 2));
+                    else if (s[0] == 'N') lua_pushnumber(L, atof(s + 2));
+                    else if (s[0] == 'B') lua_pushboolean(L, s[2] == 't');
+                    else if (s[0] == 'O') {
+                        // 对象引用：从 objectRegistry 获取并包装为 userdata
+                        int oid = atoi(s + 2);
+                        jclass agentCls = (*env)->FindClass(env, "com/luajava/LuaAgent");
+                        jmethodID getObjMid = (*env)->GetStaticMethodID(env, agentCls, "getObject", "(I)Ljava/lang/Object;");
+                        if (getObjMid) {
+                            jobject obj = (*env)->CallStaticObjectMethod(env, agentCls, getObjMid, (jint)oid);
+                            if (obj) {
+                                new_java_object_ud(L, obj);
+                                (*env)->DeleteLocalRef(env, obj);
+                            } else {
+                                lua_pushnil(L);
+                            }
+                        } else {
+                            lua_pushnil(L);
+                        }
+                        (*env)->DeleteLocalRef(env, agentCls);
+                    }
+                    else if (s[0] == 'E') { lua_pushstring(L, s + 2); lua_error(L); }
+                    else lua_pushnil(L);
+                    (*env)->ReleaseStringUTFChars(env, jresult, s);
+                    (*env)->DeleteLocalRef(env, jresult);
+                    (*env)->DeleteLocalRef(env, jname);
+                    (*env)->DeleteLocalRef(env, jargs);
+                    (*env)->DeleteLocalRef(env, runnerCls);
+                    if (!ml->isStatic) (*env)->DeleteLocalRef(env, cls);
+                    return 1;
+                }
+                (*env)->DeleteLocalRef(env, jname);
+                (*env)->DeleteLocalRef(env, jargs);
+            }
+            (*env)->DeleteLocalRef(env, runnerCls);
+        }
         if (!ml->isStatic) (*env)->DeleteLocalRef(env, cls);
         return luaL_error(L, "method not found: %s", ml->methodName);
-        return 2;
     }
     char argTypes[16];
     for (int i=0; i<nargs; i++) argTypes[i] = get_java_type_char(L, firstArgIdx+i);
