@@ -54,12 +54,13 @@ ninja:
 
 release: clean all
 	@echo "Packaging release..."
-	@mkdir -p release
+	@mkdir -p release/lib release/docs release/examples
 	cp build/luajava.so release/luajava.so 2>/dev/null || cp build_ninja/luajava.so release/luajava.so
 	cp luajava.jar release/
 	cp luaj.sh release/
-	cp -r examples release/
-	cp -r docs release/
+	cp lib/jline.jar release/lib/
+	cp -r examples/* release/examples/
+	cp -r docs/* release/docs/
 	@echo "Release files are in ./release/"
 
 clean:
