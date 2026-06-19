@@ -1,33 +1,24 @@
+# 构建产物
 build/
+build_ninja/
 out/
 luajava.jar
+release/
+
+# 平台特定文件
 *.so
 *.dylib
 *.dll
-.DS_Store
-err.txt
-test_*.luabuild_ninja/
-build/
-out/
-luajava.jar
 *.class
-build_ninja/
-build/
-out/
-luajava.jar
-*.class
-native/lualib/patches/
-test_fea.lua
-test_lua.lua
-*.class
-build_ninja/
-build/
-out/
-luajava.jar
-*.class
-native/lualib/patches/
-test_fea.lua
-test_lua.lua
-
-Review.mdrelease/
 *.tar.gz
+.DS_Store
+
+# 临时文件
+err.txt
+test_*.lua
+test_fea.lua
+test_lua.lua
+Review.md
+
+# 备份
+native/lualib/patches/
