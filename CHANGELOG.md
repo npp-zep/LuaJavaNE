@@ -1,3 +1,24 @@
+## [2.2.1] - 2026-06-19
+### Added
+- **Multi-platform Release**: Linux x86_64, Linux ARM64, macOS ARM64 pre-built packages
+- **version.properties**: single source of truth for project version/metadata
+- **Examples**: `examples/hello.lua`, `examples/async.lua`, `examples/clac.lua`
+- **make release**: one-step packaging into `release/` directory
+- **helpRepl()**: separate REPL-specific help message
+- Cross-platform LuaRocks support via `LD_PRELOAD` + `LUA_PATH`/`LUA_CPATH` detection
+
+### Changed
+- `LuaJMain.java` reads version/copyright/license from system properties
+- `luaj.sh` auto-detects Lua module paths on Linux/macOS/Termux
+- CI/CD: matrix build for multi-platform releases, fixed test workflow
+- `_VERSION` now shows `LuaJavaNE 2.2.1 (Lua x.x.x, PUC-Rio)`
+
+### Fixed
+- External Lua C extensions (e.g. `lfs.so`) now load correctly via `LD_PRELOAD`
+- Release package now includes `lib/jline.jar`
+- `copyright`/`credits`/`license` no longer show duplicate help text
+
+
 ## [2.2.1] - 2026-06-18
 🎉 This is the 100th commit of the LuaJavaNE project.
 ### Added
