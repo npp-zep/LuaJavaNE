@@ -967,6 +967,39 @@ static int java_complete(lua_State* L) {
         int nres;
         lua_resume(entry->co, L, nargs, &nres);
     }
+    // 设置 result，兼容 checkPromise 读取
+    if (nargs > 0) {
+        const char* s = lua_tostring(L, 2);
+        if (s) {
+            if (entry->result) free(entry->result);
+            entry->result = strdup(s);
+        }
+    }
+    if (nargs > 0) {
+        size_t len;
+        const char* s = lua_tolstring(L, 2, &len);
+        if (s) {
+            if (entry->result) free(entry->result);
+            entry->result = malloc(len + 3);
+            entry->result[0] = 'S';
+            entry->result[1] = ':';
+            memcpy(entry->result + 2, s, len);
+            entry->result[len + 2] = '\0';
+        }
+    }
+    if (nargs > 0) {
+        size_t len;
+        const char* s = lua_tolstring(L, 2, &len);
+        if (s) {
+            if (entry->result) free(entry->result);
+            entry->result = malloc(len + 3);
+            entry->result[0] = 'S';
+            entry->result[1] = ':';
+            memcpy(entry->result + 2, s, len);
+            entry->result[len + 2] = '\0';
+        }
+    }
+
     entry->done = 1;
     return 0;
 }
