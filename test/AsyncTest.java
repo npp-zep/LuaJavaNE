@@ -67,6 +67,7 @@ public class AsyncTest extends BaseTest {
 
     @Test
     @Disabled("CI environment has limited thread scheduling")
+    @Disabled("CI environment has limited thread scheduling")
     void asyncConcurrent() {
         int N = 10;
         L.doString("Thread = java.import('java.lang.Thread')");
