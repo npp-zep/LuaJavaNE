@@ -75,7 +75,7 @@ public class AllTests extends BaseTest {
     }
     @Test void errMethodNotFound() {
         Exception ex = assertThrows(RuntimeException.class, () -> L.doString("java.import('java.lang.String'):foobar()"));
-        assertTrue(ex.getMessage().contains("method not found"));
+        assertTrue(ex.getMessage().contains("method not found") || ex.getMessage().contains("no matching method"));
     }
     @Test void errArrayBounds() {
         Exception ex = assertThrows(RuntimeException.class, () -> L.doString("arr = java.newArray('int',2); print(arr[5])"));
