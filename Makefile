@@ -14,6 +14,8 @@ all: $(BUILD_DIR)/luajava.so $(OUT_DIR)
 	@echo "Building Java classes..."
 	javac -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/*.java
 	jar cf luajava.jar -C $(OUT_DIR) .
+	javac -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/compat/*.java
+	jar uf luajava.jar -C $(OUT_DIR) com/luajava/compat/
 	@echo "Build complete. Run './luaj.sh' to start."
 
 $(BUILD_DIR)/luajava.so:
@@ -36,7 +38,6 @@ test: junit
 	     --select-class=com.luajava.AllTests \
 	     --select-class=com.luajava.PromiseTest \
 	     --select-class=com.luajava.AsyncTest
-	@echo ""
 	@echo "All JUnit tests passed."
 
 repl: all
@@ -46,6 +47,8 @@ ninja:
 	@mkdir -p $(OUT_DIR)
 	javac -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/*.java
 	jar cf luajava.jar -C $(OUT_DIR) .
+	javac -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/compat/*.java
+	jar uf luajava.jar -C $(OUT_DIR) com/luajava/compat/
 	@mkdir -p build_ninja
 	@cd build_ninja && cmake -G Ninja .. && ninja
 	@mkdir -p $(BUILD_DIR)
@@ -53,7 +56,6 @@ ninja:
 	@echo "Ninja build + Java complete."
 
 release: clean all
-	@echo "Packaging release..."
 	@mkdir -p release/lib release/docs release/examples
 	cp build/luajava.so release/luajava.so 2>/dev/null || cp build_ninja/luajava.so release/luajava.so
 	cp luajava.jar release/
