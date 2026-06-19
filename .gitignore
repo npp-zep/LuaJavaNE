@@ -30,3 +30,4 @@ test_fea.lua
 test_lua.lua
 
 Review.mdrelease/
+*.tar.gz
