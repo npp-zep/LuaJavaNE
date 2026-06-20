@@ -25,12 +25,10 @@ $(BUILD_DIR)/luajava.so:
 $(OUT_DIR):
 	@mkdir -p $(OUT_DIR)
 
-junit: all
+test:
 	@echo "Compiling test classes..."
 	javac -d $(OUT_DIR) -cp $(OUT_DIR):$(JLINE_JAR):$(JUNIT_JAR) $(TEST_SRC)/*.java
 	@echo "Test classes compiled."
-
-test: junit
 	@echo "Running JUnit tests..."
 	java -Dluajava.library.path=$(SO_PATH) \
 	     -cp $(OUT_DIR):$(JLINE_JAR):$(JUNIT_JAR) \
