@@ -91,7 +91,13 @@ static jstring lua_check_jstring(JNIEnv* env, lua_State* L, int idx) {
 static char get_java_type_char(lua_State* L, int idx) {
     int t = lua_type(L, idx);
     switch (t) {
-        case LUA_TNUMBER: return lua_isinteger(L, idx) ? 'I' : 'D';
+        case LUA_TNUMBER:
+            if (lua_isinteger(L, idx)) {
+                lua_Integer n = lua_tointeger(L, idx);
+                if (n > 2147483647 || n < -2147483648) return 'J';
+                return 'I';
+            }
+            return 'D';
         case LUA_TSTRING: return 'S';
         case LUA_TBOOLEAN: return 'Z';
         case LUA_TUSERDATA: {
@@ -173,14 +179,16 @@ static void get_possible_arg_types(char c, char** options, int* count) {
     static char doubleOptions[2][32] = {"D","Ljava/lang/Object;"};
     static char stringOptions[2][32] = {"Ljava/lang/String;","Ljava/lang/Object;"};
     static char boolOptions[2][32]   = {"Z","Ljava/lang/Object;"};
+    static char byteArrayOptions[1][32] = {"[B"};
     static char objOptions[1][32]    = {"Ljava/lang/Object;"};
     static char* optPtrs[4];
     switch (c) {
         case 'I': optPtrs[0]=intOptions[0];optPtrs[1]=intOptions[1];optPtrs[2]=intOptions[2];optPtrs[3]=intOptions[3];*options=(char*)optPtrs;*count=4;break;
         case 'D': optPtrs[0]=doubleOptions[0];optPtrs[1]=doubleOptions[1];*options=(char*)optPtrs;*count=2;break;
+        case 'F': optPtrs[0]=doubleOptions[0];optPtrs[1]=doubleOptions[1];*options=(char*)optPtrs;*count=2;break;
         case 'S': optPtrs[0]=stringOptions[0];optPtrs[1]=stringOptions[1];*options=(char*)optPtrs;*count=2;break;
         case 'Z': optPtrs[0]=boolOptions[0];optPtrs[1]=boolOptions[1];*options=(char*)optPtrs;*count=2;break;
-        case 'A': optPtrs[0]=objOptions[0];*options=(char*)optPtrs;*count=1;break;
+        case 'A': optPtrs[0]=objOptions[0];optPtrs[1]="[B";*options=(char*)optPtrs;*count=2;break;
         default:  optPtrs[0]=objOptions[0];*options=(char*)optPtrs;*count=1;break;
     }
 }
@@ -205,6 +213,7 @@ static jmethodID try_method_combinations(JNIEnv* env, jclass cls, const char* na
             case 'S': strcat(sigBuf,"Ljava/lang/String;");break;
             case 'I': strcat(sigBuf,"I");break;
             case 'D': strcat(sigBuf,"D");break;
+            case 'F': strcat(sigBuf,"F");break;
             case 'Z': strcat(sigBuf,"Z");break;
             case 'V': strcat(sigBuf,"V");break;
             case 'J': strcat(sigBuf,"J");break;
@@ -236,7 +245,7 @@ static jmethodID try_method_combinations(JNIEnv* env, jclass cls, const char* na
 static jmethodID try_find_method(JNIEnv* env, jclass cls, const char* name,
                                   lua_State* L, int startIdx, int nargs,
                                   char* outReturnType, int isStatic) {
-    char returnTypes[] = {'S','I','Z','D','J','V','O',0};
+    char returnTypes[] = {'S','I','Z','D','F','J','V','O',0};
     for (char* rt=returnTypes; *rt; rt++) {
         char sig[128] = "(";
         jmethodID m = try_method_combinations(env, cls, name, L, startIdx, nargs, *rt, 0, sig, outReturnType, isStatic);
@@ -250,7 +259,9 @@ static void push_jni_args(lua_State* L, JNIEnv* env, int startIdx, int nargs, jv
         int idx = startIdx + i;
         switch (argTypes[i]) {
             case 'I': args[i].i = (jint)lua_tointeger(L, idx); break;
+            case 'J': args[i].j = (jlong)lua_tointeger(L, idx); break;
             case 'D': args[i].d = (jdouble)lua_tonumber(L, idx); break;
+            case 'F': args[i].f = (jfloat)lua_tonumber(L, idx); break;
             case 'Z': args[i].z = (jboolean)lua_toboolean(L, idx); break;
             case 'S': args[i].l = lua_check_jstring(env, L, idx); break;
             default:  args[i].l = NULL; break;
@@ -263,6 +274,7 @@ static int push_java_result(lua_State* L, JNIEnv* env, jvalue result, char retur
         case 'V': lua_pushnil(L); return 1;
         case 'I': lua_pushinteger(L, (lua_Integer)result.i); return 1;
         case 'D': lua_pushnumber(L, (lua_Number)result.d); return 1;
+        case 'F': lua_pushnumber(L, (lua_Number)result.f); return 1;
         case 'Z': lua_pushboolean(L, result.z); return 1;
         case 'J': lua_pushinteger(L, (lua_Integer)result.j); return 1;
         case 'S': {
