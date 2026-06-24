@@ -648,7 +648,29 @@ static int java_class_newindex(lua_State* L) {
 
 // ========== Java.Object 元方法 ==========
 static int java_object_tostring(lua_State* L) {
-    lua_pushstring(L, "Java.Object");
+    JavaUserdata* ud = (JavaUserdata*)luaL_checkudata(L, 1, JAVAOBJECT_META);
+    if (!ud || !ud->obj) {
+        lua_pushstring(L, "Java.Object (released)");
+        return 1;
+    }
+    JNIEnv* env = getEnv();
+    jclass cls = (*env)->GetObjectClass(env, ud->obj);
+    jmethodID toString = (*env)->GetMethodID(env, cls, "toString", "()Ljava/lang/String;");
+    if (toString && !(*env)->ExceptionCheck(env)) {
+        jstring js = (jstring)(*env)->CallObjectMethod(env, ud->obj, toString);
+        if (js) {
+            const char* s = (*env)->GetStringUTFChars(env, js, NULL);
+            lua_pushstring(L, s);
+            (*env)->ReleaseStringUTFChars(env, js, s);
+            (*env)->DeleteLocalRef(env, js);
+        } else {
+            lua_pushstring(L, "Java.Object");
+        }
+    } else {
+        (*env)->ExceptionClear(env);
+        lua_pushstring(L, "Java.Object");
+    }
+    (*env)->DeleteLocalRef(env, cls);
     return 1;
 }
 
