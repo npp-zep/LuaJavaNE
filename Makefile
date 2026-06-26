@@ -24,8 +24,8 @@ all: $(BUILD_DIR)/luajava.so $(OUT_DIR)
 	@echo "Building Java classes..."
 	$(JAVAC_BIN) -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/*.java
 	jar cf luajava.jar -C $(OUT_DIR) .
-	$(JAVAC_BIN) -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/compat/*.java
-	jar uf luajava.jar -C $(OUT_DIR) com/luajava/compat/
+#	$(JAVAC_BIN) -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/compat/*.java
+#	jar uf luajava.jar -C $(OUT_DIR) com/luajava/compat/
 	@echo "Build complete. Run './luaj.sh' to start."
 
 $(BUILD_DIR)/luajava.so:
@@ -56,8 +56,8 @@ ninja:
 	@mkdir -p $(OUT_DIR)
 	$(JAVAC_BIN) -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/*.java
 	jar cf luajava.jar -C $(OUT_DIR) .
-	$(JAVAC_BIN) -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/compat/*.java
-	jar uf luajava.jar -C $(OUT_DIR) com/luajava/compat/
+#	$(JAVAC_BIN) -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/compat/*.java
+#	jar uf luajava.jar -C $(OUT_DIR) com/luajava/compat/
 	@mkdir -p build_ninja
 	@cd build_ninja && cmake -G Ninja .. && ninja
 	@mkdir -p $(BUILD_DIR)
