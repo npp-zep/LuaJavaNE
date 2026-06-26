@@ -1,4 +1,8 @@
-.PHONY: all clean test junit repl ninja release
+JAVA_HOME := $(shell ./select_jdk.sh)
+JAVA_BIN := $(JAVA_HOME)/bin/java
+JAVAC_BIN := $(JAVA_HOME)/bin/javac
+
+.PHONY: all clean test repl ninja release
 
 BUILD_DIR = build
 OUT_DIR = out
@@ -11,10 +15,16 @@ JUNIT_JAR = $(LIB_DIR)/junit-standalone.jar
 SO_PATH = $(abspath $(BUILD_DIR)/luajava.so)
 
 all: $(BUILD_DIR)/luajava.so $(OUT_DIR)
+	@echo "========================================"
+	@echo "  LuaJavaNE Build System"
+	@echo "  JDK: `$(JAVA_BIN) -version 2>&1 | head -1`"
+	@echo "  CC:  `cc --version 2>&1 | head -1`"
+	@echo "  OS:  `uname -sm`"
+	@echo "========================================"
 	@echo "Building Java classes..."
-	javac -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/*.java
+	$(JAVAC_BIN) -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/*.java
 	jar cf luajava.jar -C $(OUT_DIR) .
-	javac -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/compat/*.java
+	$(JAVAC_BIN) -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/compat/*.java
 	jar uf luajava.jar -C $(OUT_DIR) com/luajava/compat/
 	@echo "Build complete. Run './luaj.sh' to start."
 
@@ -25,17 +35,18 @@ $(BUILD_DIR)/luajava.so:
 $(OUT_DIR):
 	@mkdir -p $(OUT_DIR)
 
-test:
+test: all
 	@echo "Compiling test classes..."
-	javac -d $(OUT_DIR) -cp $(OUT_DIR):$(JLINE_JAR):$(JUNIT_JAR) $(TEST_SRC)/*.java
+	$(JAVAC_BIN) -d $(OUT_DIR) -cp $(OUT_DIR):$(JLINE_JAR):$(JUNIT_JAR) $(TEST_SRC)/*.java
 	@echo "Test classes compiled."
 	@echo "Running JUnit tests..."
-	java -Dluajava.library.path=$(SO_PATH) \
+	$(JAVA_BIN) -Dluajava.library.path=$(SO_PATH) \
 	     -cp $(OUT_DIR):$(JLINE_JAR):$(JUNIT_JAR) \
 	     org.junit.platform.console.ConsoleLauncher \
 	     --select-class=com.luajava.AllTests \
 	     --select-class=com.luajava.PromiseTest \
 	     --select-class=com.luajava.AsyncTest
+	@echo ""
 	@echo "All JUnit tests passed."
 
 repl: all
@@ -43,9 +54,9 @@ repl: all
 
 ninja:
 	@mkdir -p $(OUT_DIR)
-	javac -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/*.java
+	$(JAVAC_BIN) -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/*.java
 	jar cf luajava.jar -C $(OUT_DIR) .
-	javac -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/compat/*.java
+	$(JAVAC_BIN) -d $(OUT_DIR) -cp $(JLINE_JAR) $(JAVA_SRC)/compat/*.java
 	jar uf luajava.jar -C $(OUT_DIR) com/luajava/compat/
 	@mkdir -p build_ninja
 	@cd build_ninja && cmake -G Ninja .. && ninja

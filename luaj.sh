@@ -1,7 +1,15 @@
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# 优先使用当前目录的 .so（release），否则用 build/ 下的
+# ===== 读取版本配置 =====
+if [ -f "$SCRIPT_DIR/version.properties" ]; then
+    . "$SCRIPT_DIR/version.properties"
+fi
+MIN_JDK="${MIN_JDK_VERSION:-17}"
+REC_JDK="${RECOMMENDED_JDK_VERSION:-21}"
+
+
+# ===== 优先使用当前目录的 .so =====
 if [ -f "$SCRIPT_DIR/luajava.so" ]; then
     SO_PATH="$SCRIPT_DIR/luajava.so"
 elif [ -f "$SCRIPT_DIR/build/luajava.so" ]; then
@@ -10,27 +18,17 @@ else
     SO_PATH=""
 fi
 
-# JLine jar 查找
-if [ -f "$SCRIPT_DIR/lib/jline.jar" ]; then
-    JLINE_PATH="$SCRIPT_DIR/lib/jline.jar"
-elif [ -f "$SCRIPT_DIR/jline.jar" ]; then
-    JLINE_PATH="$SCRIPT_DIR/jline.jar"
-else
-    JLINE_PATH=""
-fi
-
 JAR_PATH="$SCRIPT_DIR/luajava.jar"
+JLINE_PATH="$SCRIPT_DIR/lib/jline.jar"
 
 JAVA_OPTS=""
 if [ -f "$SO_PATH" ]; then
     JAVA_OPTS="-Dluajava.library.path=$SO_PATH"
 fi
-
 JAVA_OPTS="$JAVA_OPTS -Dorg.jline.terminal.jna=false -Dorg.jline.terminal.jansi=false -Dorg.jline.terminal.ffm=false -Djline.native=false"
 
-# 读取版本配置
+# ===== 传递版本信息到 Java =====
 if [ -f "$SCRIPT_DIR/version.properties" ]; then
-    . "$SCRIPT_DIR/version.properties"
     JAVA_OPTS="$JAVA_OPTS -Dluajava.version=$PROJECT_VERSION"
     JAVA_OPTS="$JAVA_OPTS -Dluajava.name=$PROJECT_NAME"
     JAVA_OPTS="$JAVA_OPTS -Dluajava.copyright=$PROJECT_COPYRIGHT"
@@ -80,6 +78,7 @@ detect_lua_paths() {
     [ -z "$LUA_PATH" ] && export LUA_PATH="/usr/share/lua/5.4/?.lua;/usr/local/share/lua/5.4/?.lua;;"
 }
 detect_lua_paths
-# ===== 跨平台路径检测结束 =====
 
-LD_PRELOAD="$SO_PATH:$LD_PRELOAD" java $JAVA_OPTS -cp "$JAR_PATH:$JLINE_PATH" com.luajava.LuaJMain "$@"
+# ===== 启动 =====
+JAVA_BIN=$(./select_jdk.sh)/bin/java
+LD_PRELOAD="$SO_PATH:$LD_PRELOAD" "$JAVA_BIN" $JAVA_OPTS -cp "$JAR_PATH:$JLINE_PATH" com.luajava.LuaJMain "$@"
