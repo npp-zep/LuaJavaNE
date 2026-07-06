@@ -50,7 +50,8 @@ test: all
 	     org.junit.platform.console.ConsoleLauncher \
 	     --select-class=com.luajava.AllTests \
 	     --select-class=com.luajava.PromiseTest \
-	     --select-class=com.luajava.AsyncTest
+	     --select-class=com.luajava.AsyncTest \
+	     --select-class=com.luajava.AgentTest
 	@echo ""
 	@echo "All JUnit tests passed."
 

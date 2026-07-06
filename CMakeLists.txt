@@ -60,6 +60,7 @@ add_library(luajava SHARED
     "${NATIVE_DIR}/lualib/lualibjava.c"
     "${NATIVE_DIR}/lualib/lualib_async.c"
     "${NATIVE_DIR}/lualib/lualib_clac.c"
+    "${NATIVE_DIR}/lualib/lualib_gc.c"
     "${NATIVE_DIR}/lualib/lua_custom_init.c"
 )
 
