@@ -3,10 +3,12 @@
 #include "lua.h"
 #include "lauxlib.h"
 #include "lualib.h"
+#include <bits/pthread_types.h>
 #include <jni.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+
 
 extern JNIEnv* getEnv();
 extern int java_runAsync(lua_State* L);
@@ -1134,6 +1136,8 @@ static StoreEntry* store_registry = NULL;
 
 static int java_store(lua_State* L) {
     const char* key = luaL_checkstring(L, 1);
+
+  
     StoreEntry* e = store_registry;
     while (e) {
         if (strcmp(e->key, key) == 0) {
@@ -1179,11 +1183,15 @@ static int java_store(lua_State* L) {
     }
     e->next = store_registry;
     store_registry = e;
+
+  
     return 0;
 }
 
 static int java_fetch(lua_State* L) {
     const char* key = luaL_checkstring(L, 1);
+
+  
     StoreEntry* e = store_registry;
     while (e) {
         if (strcmp(e->key, key) == 0) {
@@ -1200,11 +1208,15 @@ static int java_fetch(lua_State* L) {
         }
         e = e->next;
     }
+
+    
     lua_pushnil(L); return 1;
 }
 
 static int java_deleteStore(lua_State* L) {
     const char* key = luaL_checkstring(L, 1);
+
+  
     StoreEntry* prev = NULL;
     StoreEntry* e = store_registry;
     while (e) {
@@ -1219,6 +1231,7 @@ static int java_deleteStore(lua_State* L) {
         prev = e;
         e = e->next;
     }
+
     return 0;
 }
 static const luaL_Reg javalib[] = {

@@ -9,11 +9,11 @@
 extern JavaVM* g_jvm;
 extern JNIEnv* getEnv(void);
 
-// ========== JavaUserdata 结构（与 lualibjava.c 保持一致） ==========
+
 typedef struct {
     jobject obj;
-    jclass  cls;
-    int     isClass;
+    jclass cls;
+    int isclass;
 } JavaUserdata;
 
 // ========== 元表名称 ==========
@@ -30,40 +30,7 @@ typedef struct RefEntry {
 static RefEntry* ref_list = NULL;
 static int next_ref_id = 1;
 
-// ========== 创建 Java 对象 userdata（直接实现，不依赖外部） ==========
-static int create_java_object_ud(lua_State* L, jobject obj) {
-    if (!obj) {
-        lua_pushnil(L);
-        return 1;
-    }
-    
-    JNIEnv* env = getEnv();
-    if (!env) {
-        lua_pushnil(L);
-        return 1;
-    }
-    
-    // 获取对象的类
-    jclass objCls = (*env)->GetObjectClass(env, obj);
-    if (!objCls) {
-        lua_pushnil(L);
-        return 1;
-    }
-    
-    // 创建 userdata
-    JavaUserdata* ud = (JavaUserdata*)lua_newuserdatauv(L, sizeof(JavaUserdata), 0);
-    ud->obj = (*env)->NewGlobalRef(env, obj);
-    ud->cls = (jclass)(*env)->NewWeakGlobalRef(env, objCls);
-    ud->isClass = 0;
-    
-    (*env)->DeleteLocalRef(env, objCls);
-    
-    // 设置元表
-    luaL_getmetatable(L, JAVAOBJECT_META);
-    lua_setmetatable(L, -2);
-    
-    return 1;
-}
+#include "lualibjava_internal.h"
 
 // ========== Ref.hold ==========
 static int lua_ref_hold(lua_State* L) {
@@ -184,10 +151,10 @@ static int lua_ref_get(lua_State* L) {
                     lua_pushnil(L);
                     return 1;
                 }
-                create_java_object_ud(L, obj);
+                new_java_object_ud(L, obj);
                 (*env)->DeleteLocalRef(env, obj);
             } else {
-                create_java_object_ud(L, entry->obj);
+                new_java_object_ud(L, entry->obj);
             }
             return 1;
         }
