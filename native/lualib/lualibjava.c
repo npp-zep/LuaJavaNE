@@ -174,6 +174,7 @@ static int new_method_lookup(lua_State* L, jobject obj, const char* name, int is
 }
 
 // ========== 类型推导辅助 ==========
+// ========== 恢复后的 get_possible_arg_types（原始逻辑 + static 修复） ==========
 static void get_possible_arg_types(char c, char** options, int* count) {
     static char intOptions[4][32]    = {"I","D","J","Ljava/lang/Object;"};
     static char doubleOptions[2][32] = {"D","Ljava/lang/Object;"};
@@ -181,15 +182,46 @@ static void get_possible_arg_types(char c, char** options, int* count) {
     static char boolOptions[2][32]   = {"Z","Ljava/lang/Object;"};
     static char byteArrayOptions[1][32] = {"[B"};
     static char objOptions[1][32]    = {"Ljava/lang/Object;"};
-    static char* optPtrs[4];
+    static char* optPtrs[4];  // static 确保指针生命周期
+
     switch (c) {
-        case 'I': optPtrs[0]=intOptions[0];optPtrs[1]=intOptions[1];optPtrs[2]=intOptions[2];optPtrs[3]=intOptions[3];*options=(char*)optPtrs;*count=4;break;
-        case 'D': optPtrs[0]=doubleOptions[0];optPtrs[1]=doubleOptions[1];*options=(char*)optPtrs;*count=2;break;
-        case 'F': optPtrs[0]=doubleOptions[0];optPtrs[1]=doubleOptions[1];*options=(char*)optPtrs;*count=2;break;
-        case 'S': optPtrs[0]=stringOptions[0];optPtrs[1]=stringOptions[1];*options=(char*)optPtrs;*count=2;break;
-        case 'Z': optPtrs[0]=boolOptions[0];optPtrs[1]=boolOptions[1];*options=(char*)optPtrs;*count=2;break;
-        case 'A': optPtrs[0]=objOptions[0];optPtrs[1]="[B";*options=(char*)optPtrs;*count=2;break;
-        default:  optPtrs[0]=objOptions[0];*options=(char*)optPtrs;*count=1;break;
+        case 'I':
+            optPtrs[0] = intOptions[0];
+            optPtrs[1] = intOptions[1];
+            optPtrs[2] = intOptions[2];
+            optPtrs[3] = intOptions[3];
+            *options = (char*)optPtrs;
+            *count = 4;
+            break;
+        case 'D':
+        case 'F':
+            optPtrs[0] = doubleOptions[0];
+            optPtrs[1] = doubleOptions[1];
+            *options = (char*)optPtrs;
+            *count = 2;
+            break;
+        case 'S':
+            optPtrs[0] = stringOptions[0];
+            optPtrs[1] = stringOptions[1];
+            *options = (char*)optPtrs;
+            *count = 2;
+            break;
+        case 'Z':
+            optPtrs[0] = boolOptions[0];
+            optPtrs[1] = boolOptions[1];
+            *options = (char*)optPtrs;
+            *count = 2;
+            break;
+        case 'A':
+            optPtrs[0] = objOptions[0];
+            *options = (char*)optPtrs;
+            *count = 1;
+            break;
+        default:
+            optPtrs[0] = objOptions[0];
+            *options = (char*)optPtrs;
+            *count = 1;
+            break;
     }
 }
 
@@ -210,14 +242,14 @@ static jmethodID try_method_combinations(JNIEnv* env, jclass cls, const char* na
     if (argIdx == nargs) {
         strcat(sigBuf, ")");
         switch (returnType) {
-            case 'S': strcat(sigBuf,"Ljava/lang/String;");break;
-            case 'I': strcat(sigBuf,"I");break;
-            case 'D': strcat(sigBuf,"D");break;
-            case 'F': strcat(sigBuf,"F");break;
-            case 'Z': strcat(sigBuf,"Z");break;
-            case 'V': strcat(sigBuf,"V");break;
-            case 'J': strcat(sigBuf,"J");break;
-            default:  strcat(sigBuf,"Ljava/lang/Object;");break;
+            case 'S': strcat(sigBuf,"Ljava/lang/String;"); break;
+            case 'I': strcat(sigBuf,"I"); break;
+            case 'D': strcat(sigBuf,"D"); break;
+            case 'F': strcat(sigBuf,"F"); break;
+            case 'Z': strcat(sigBuf,"Z"); break;
+            case 'V': strcat(sigBuf,"V"); break;
+            case 'J': strcat(sigBuf,"J"); break;
+            default:  strcat(sigBuf,"Ljava/lang/Object;"); break;
         }
         jmethodID method = isStatic ?
             (*env)->GetStaticMethodID(env, cls, name, sigBuf) :
@@ -230,11 +262,14 @@ static jmethodID try_method_combinations(JNIEnv* env, jclass cls, const char* na
         return NULL;
     }
     char c = get_java_type_char(L, startIdx + argIdx);
-    char* options; int count;
+    char* options;
+    int count;
     get_possible_arg_types(c, &options, &count);
+    char** optPtrs = (char**)options;
     for (int i = 0; i < count; i++) {
-        char saved[128]; strcpy(saved, sigBuf);
-        strcat(sigBuf, ((char**)options)[i]);
+        char saved[128];
+        strcpy(saved, sigBuf);
+        strcat(sigBuf, optPtrs[i]);
         jmethodID m = try_method_combinations(env, cls, name, L, startIdx, nargs, returnType, argIdx+1, sigBuf, outReturnType, isStatic);
         if (m) return m;
         strcpy(sigBuf, saved);
@@ -255,7 +290,7 @@ static jmethodID try_find_method(JNIEnv* env, jclass cls, const char* name,
 }
 
 static void push_jni_args(lua_State* L, JNIEnv* env, int startIdx, int nargs, jvalue* args, char* argTypes) {
-    for (int i=0; i<nargs; i++) {
+    for (int i = 0; i < nargs; i++) {
         int idx = startIdx + i;
         switch (argTypes[i]) {
             case 'I': args[i].i = (jint)lua_tointeger(L, idx); break;
@@ -264,7 +299,30 @@ static void push_jni_args(lua_State* L, JNIEnv* env, int startIdx, int nargs, jv
             case 'F': args[i].f = (jfloat)lua_tonumber(L, idx); break;
             case 'Z': args[i].z = (jboolean)lua_toboolean(L, idx); break;
             case 'S': args[i].l = lua_check_jstring(env, L, idx); break;
-            default:  args[i].l = NULL; break;
+            default: {
+                if (lua_isuserdata(L, idx)) {
+                    if (lua_getmetatable(L, idx)) {
+                        luaL_getmetatable(L, JAVAOBJECT_META);
+                        int isJavaObject = lua_rawequal(L, -1, -2);
+                        lua_pop(L, 2);
+                        if (isJavaObject) {
+                            JavaUserdata* ud = (JavaUserdata*)lua_touserdata(L, idx);
+                            if (ud) { args[i].l = ud->obj; break; }
+                        }
+                    }
+                    if (lua_getmetatable(L, idx)) {
+                        luaL_getmetatable(L, JAVAARRAY_META);
+                        int isJavaArray = lua_rawequal(L, -1, -2);
+                        lua_pop(L, 2);
+                        if (isJavaArray) {
+                            JavaArray* arr = (JavaArray*)lua_touserdata(L, idx);
+                            if (arr) { args[i].l = arr->arrayObj; break; }
+                        }
+                    }
+                }
+                args[i].l = NULL;
+                break;
+            }
         }
     }
 }
@@ -421,14 +479,19 @@ static int java_array_gc(lua_State* L) {
     return 0;
 }
 
-// ========== MethodLookup 元方法 ==========
 static int method_lookup_call(lua_State* L) {
     JNIEnv* env = getEnv();
     MethodLookup* ml = (MethodLookup*)luaL_checkudata(L, 1, METHODLOOKUP_META);
+    if (!ml) {
+        luaL_error(L, "invalid method lookup");
+        return 0;
+    }
+
     int firstArgIdx = 2;
     int nargs = lua_gettop(L) - 1;
-    if (!ml->isStatic && nargs >= 1 && lua_isuserdata(L, firstArgIdx)) {
-        // 检查是否是 Java.Object 且是同一个对象
+
+    // 处理实例方法调用时的 self 参数（instance:method()）
+    if (ml->isStatic == 0 && nargs >= 1 && lua_isuserdata(L, firstArgIdx)) {
         if (lua_getmetatable(L, firstArgIdx)) {
             luaL_getmetatable(L, JAVAOBJECT_META);
             int isObj = lua_rawequal(L, -1, -2);
@@ -442,107 +505,94 @@ static int method_lookup_call(lua_State* L) {
             }
         }
     }
-    jclass cls = ml->isStatic ? (jclass)ml->obj : (*env)->GetObjectClass(env, ml->obj);
+
+    jclass cls = NULL;
+    int actualIsStatic = ml->isStatic;
     char returnType = 'O';
-    jmethodID method = try_find_method(env, cls, ml->methodName, L, firstArgIdx, nargs, &returnType, ml->isStatic);
-    if (!method) {
-        // JNI GetMethodID 失败，用 Java 反射 fallback
-        jclass runnerCls = (*env)->FindClass(env, "com/luajava/AsyncRunner");
-        if (runnerCls) {
-            jmethodID invokeMid = (*env)->GetStaticMethodID(env, runnerCls, "invokeInstance",
-                "(Ljava/lang/Object;Ljava/lang/String;[Ljava/lang/String;)Ljava/lang/String;");
-            if (invokeMid) {
-                jstring jname = (*env)->NewStringUTF(env, ml->methodName);
-                jclass strCls = (*env)->FindClass(env, "java/lang/String");
-                jobjectArray jargs = (*env)->NewObjectArray(env, nargs * 2, strCls, NULL);
-                for (int i = 0; i < nargs; i++) {
-                    const char* val = lua_tostring(L, firstArgIdx + i);
-                    char hint = get_java_type_char(L, firstArgIdx + i);
-                    char hintStr[2] = { hint, 0 };
-                    jstring jval = (*env)->NewStringUTF(env, val ? val : "");
-                    jstring jhint = (*env)->NewStringUTF(env, hintStr);
-                    (*env)->SetObjectArrayElement(env, jargs, i * 2, jval);
-                    (*env)->SetObjectArrayElement(env, jargs, i * 2 + 1, jhint);
-                    (*env)->DeleteLocalRef(env, jval);
-                    (*env)->DeleteLocalRef(env, jhint);
-                }
-                jstring jresult = (jstring)(*env)->CallStaticObjectMethod(env, runnerCls, invokeMid,
-                    ml->obj, jname, jargs);
-                if (jresult) {
-                    const char* s = (*env)->GetStringUTFChars(env, jresult, NULL);
-                    if (s[0] == 'S') lua_pushstring(L, s + 2);
-                    else if (s[0] == 'I') lua_pushinteger(L, atoll(s + 2));
-                    else if (s[0] == 'N') lua_pushnumber(L, atof(s + 2));
-                    else if (s[0] == 'B') lua_pushboolean(L, s[2] == 't');
-                    else if (s[0] == 'O') {
-                        // 对象引用：从 objectRegistry 获取并包装为 userdata
-                        int oid = atoi(s + 2);
-                        jclass agentCls = (*env)->FindClass(env, "com/luajava/LuaAgent");
-                        jmethodID getObjMid = (*env)->GetStaticMethodID(env, agentCls, "getObject", "(I)Ljava/lang/Object;");
-                        if (getObjMid) {
-                            jobject obj = (*env)->CallStaticObjectMethod(env, agentCls, getObjMid, (jint)oid);
-                            if (obj) {
-                                new_java_object_ud(L, obj);
-                                (*env)->DeleteLocalRef(env, obj);
-                            } else {
-                                lua_pushnil(L);
-                            }
-                        } else {
-                            lua_pushnil(L);
-                        }
-                        (*env)->DeleteLocalRef(env, agentCls);
-                    }
-                    else if (s[0] == 'E') { lua_pushstring(L, s + 2); lua_error(L); }
-                    else lua_pushnil(L);
-                    (*env)->ReleaseStringUTFChars(env, jresult, s);
-                    (*env)->DeleteLocalRef(env, jresult);
-                    (*env)->DeleteLocalRef(env, jname);
-                    (*env)->DeleteLocalRef(env, jargs);
-                    (*env)->DeleteLocalRef(env, runnerCls);
-                    if (!ml->isStatic) (*env)->DeleteLocalRef(env, cls);
-                    return 1;
-                }
-                (*env)->DeleteLocalRef(env, jname);
-                (*env)->DeleteLocalRef(env, jargs);
+    jmethodID method = NULL;
+
+    if (ml->isStatic == 1) {
+        cls = (jclass)ml->obj;
+        actualIsStatic = 1;
+        method = try_find_method(env, cls, ml->methodName, L, firstArgIdx, nargs, &returnType, 1);
+    } else if (ml->isStatic == 0) {
+        cls = (*env)->GetObjectClass(env, ml->obj);
+        actualIsStatic = 0;
+        method = try_find_method(env, cls, ml->methodName, L, firstArgIdx, nargs, &returnType, 0);
+    } else {
+        // isStatic == -1: 自动检测（ml->obj 是 Class 对象）
+        // 先尝试静态方法
+        cls = (jclass)ml->obj;
+        method = try_find_method(env, cls, ml->methodName, L, firstArgIdx, nargs, &returnType, 1);
+        if (method) {
+            actualIsStatic = 1;
+        } else {
+            // 再尝试实例方法（Class 对象本身作为实例）
+            cls = (*env)->GetObjectClass(env, ml->obj);
+            method = try_find_method(env, cls, ml->methodName, L, firstArgIdx, nargs, &returnType, 0);
+            if (method) {
+                actualIsStatic = 0;
             }
-            (*env)->DeleteLocalRef(env, runnerCls);
         }
-        if (!ml->isStatic) (*env)->DeleteLocalRef(env, cls);
-        return luaL_error(L, "method not found: %s", ml->methodName);
     }
+
+    // 关键修改：方法未找到时抛出 Lua 错误
+    if (!method) {
+        if (cls && ml->isStatic != 1) (*env)->DeleteLocalRef(env, cls);
+        luaL_error(L, "method not found: %s", ml->methodName);
+        return 0;
+    }
+
+    // 构建参数
     char argTypes[16];
-    for (int i=0; i<nargs; i++) argTypes[i] = get_java_type_char(L, firstArgIdx+i);
-    jvalue args[nargs]; memset(args, 0, sizeof(args));
+    for (int i = 0; i < nargs && i < 16; i++) {
+        argTypes[i] = get_java_type_char(L, firstArgIdx + i);
+    }
+
+    jvalue args[nargs];
+    memset(args, 0, sizeof(args));
     push_jni_args(L, env, firstArgIdx, nargs, args, argTypes);
-    jvalue result; memset(&result, 0, sizeof(result));
-    if (ml->isStatic) {
+
+    jvalue result;
+    memset(&result, 0, sizeof(result));
+
+    if (actualIsStatic == 1) {
         switch (returnType) {
-            case 'S': result.l=(*env)->CallStaticObjectMethodA(env, cls, method, args); break;
-            case 'I': result.i=(*env)->CallStaticIntMethodA(env, cls, method, args); break;
-            case 'D': result.d=(*env)->CallStaticDoubleMethodA(env, cls, method, args); break;
-            case 'Z': result.z=(*env)->CallStaticBooleanMethodA(env, cls, method, args); break;
+            case 'S': result.l = (*env)->CallStaticObjectMethodA(env, cls, method, args); break;
+            case 'I': result.i = (*env)->CallStaticIntMethodA(env, cls, method, args); break;
+            case 'D': result.d = (*env)->CallStaticDoubleMethodA(env, cls, method, args); break;
+            case 'Z': result.z = (*env)->CallStaticBooleanMethodA(env, cls, method, args); break;
             case 'V': (*env)->CallStaticVoidMethodA(env, cls, method, args); break;
-            case 'J': result.j=(*env)->CallStaticLongMethodA(env, cls, method, args); break;
-            default:  result.l=(*env)->CallStaticObjectMethodA(env, cls, method, args); break;
+            case 'J': result.j = (*env)->CallStaticLongMethodA(env, cls, method, args); break;
+            default:  result.l = (*env)->CallStaticObjectMethodA(env, cls, method, args); break;
         }
     } else {
         switch (returnType) {
-            case 'S': result.l=(*env)->CallObjectMethodA(env, ml->obj, method, args); break;
-            case 'I': result.i=(*env)->CallIntMethodA(env, ml->obj, method, args); break;
-            case 'D': result.d=(*env)->CallDoubleMethodA(env, ml->obj, method, args); break;
-            case 'Z': result.z=(*env)->CallBooleanMethodA(env, ml->obj, method, args); break;
+            case 'S': result.l = (*env)->CallObjectMethodA(env, ml->obj, method, args); break;
+            case 'I': result.i = (*env)->CallIntMethodA(env, ml->obj, method, args); break;
+            case 'D': result.d = (*env)->CallDoubleMethodA(env, ml->obj, method, args); break;
+            case 'Z': result.z = (*env)->CallBooleanMethodA(env, ml->obj, method, args); break;
             case 'V': (*env)->CallVoidMethodA(env, ml->obj, method, args); break;
-            default:  result.l=(*env)->CallObjectMethodA(env, ml->obj, method, args); break;
+            case 'J': result.j = (*env)->CallLongMethodA(env, ml->obj, method, args); break;
+            default:  result.l = (*env)->CallObjectMethodA(env, ml->obj, method, args); break;
         }
     }
-    for (int i=0; i<nargs; i++) if (argTypes[i]=='S' && args[i].l) (*env)->DeleteLocalRef(env, args[i].l);
-    if ((*env)->ExceptionCheck(env)) {
-        (*env)->ExceptionDescribe(env); (*env)->ExceptionClear(env);
-        if (!ml->isStatic) (*env)->DeleteLocalRef(env, cls);
-        lua_pushnil(L); lua_pushfstring(L, "method threw exception: %s", ml->methodName);
-        return 2;
+
+    // 清理字符串参数
+    for (int i = 0; i < nargs && i < 16; i++) {
+        if (argTypes[i] == 'S' && args[i].l) {
+            (*env)->DeleteLocalRef(env, args[i].l);
+        }
     }
-    if (!ml->isStatic) (*env)->DeleteLocalRef(env, cls);
+
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        if (cls && ml->isStatic != 1) (*env)->DeleteLocalRef(env, cls);
+        luaL_error(L, "method threw exception: %s", ml->methodName);
+        return 0;
+    }
+
+    if (cls && ml->isStatic != 1) (*env)->DeleteLocalRef(env, cls);
     return push_java_result(L, env, result, returnType);
 }
 
@@ -609,25 +659,54 @@ static int java_class_index(lua_State* L) {
     JNIEnv* env = getEnv();
     JavaUserdata* ud = (JavaUserdata*)luaL_checkudata(L, 1, JAVACLASS_META);
     const char* key = luaL_checkstring(L, 2);
-    if (strcmp(key, "new") == 0) { lua_pushcfunction(L, java_class_call); return 1; }
+    if (strcmp(key, "new") == 0) {
+        lua_pushcfunction(L, java_class_call);
+        return 1;
+    }
     jclass cls = (jclass)ud->obj;
+
+    // 尝试读取静态字段 (String)
     jfieldID field = (*env)->GetStaticFieldID(env, cls, key, "Ljava/lang/String;");
     if (field && !(*env)->ExceptionCheck(env)) {
         jstring val = (jstring)(*env)->GetStaticObjectField(env, cls, field);
-        if (val) { const char* c = (*env)->GetStringUTFChars(env, val, NULL); lua_pushstring(L, c); (*env)->ReleaseStringUTFChars(env, val, c); (*env)->DeleteLocalRef(env, val); return 1; }
-        lua_pushnil(L); return 1;
+        if (val) {
+            const char* c = (*env)->GetStringUTFChars(env, val, NULL);
+            lua_pushstring(L, c);
+            (*env)->ReleaseStringUTFChars(env, val, c);
+            (*env)->DeleteLocalRef(env, val);
+            return 1;
+        }
+        lua_pushnil(L);
+        return 1;
     }
     (*env)->ExceptionClear(env);
+
+    // 尝试读取静态字段 (int)
     field = (*env)->GetStaticFieldID(env, cls, key, "I");
-    if (field && !(*env)->ExceptionCheck(env)) { lua_pushinteger(L, (*env)->GetStaticIntField(env, cls, field)); return 1; }
+    if (field && !(*env)->ExceptionCheck(env)) {
+        lua_pushinteger(L, (*env)->GetStaticIntField(env, cls, field));
+        return 1;
+    }
     (*env)->ExceptionClear(env);
+
+    // 尝试读取静态字段 (boolean)
     field = (*env)->GetStaticFieldID(env, cls, key, "Z");
-    if (field && !(*env)->ExceptionCheck(env)) { lua_pushboolean(L, (*env)->GetStaticBooleanField(env, cls, field)); return 1; }
+    if (field && !(*env)->ExceptionCheck(env)) {
+        lua_pushboolean(L, (*env)->GetStaticBooleanField(env, cls, field));
+        return 1;
+    }
     (*env)->ExceptionClear(env);
+
+    // 尝试读取静态字段 (double)
     field = (*env)->GetStaticFieldID(env, cls, key, "D");
-    if (field && !(*env)->ExceptionCheck(env)) { lua_pushnumber(L, (*env)->GetStaticDoubleField(env, cls, field)); return 1; }
+    if (field && !(*env)->ExceptionCheck(env)) {
+        lua_pushnumber(L, (*env)->GetStaticDoubleField(env, cls, field));
+        return 1;
+    }
     (*env)->ExceptionClear(env);
-    return new_method_lookup(L, ud->obj, key, 1);
+
+    // 返回 MethodLookup，isStatic = -1 表示自动检测
+    return new_method_lookup(L, ud->obj, key, -1);
 }
 
 static int java_class_newindex(lua_State* L) {

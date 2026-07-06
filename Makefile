@@ -73,6 +73,7 @@ release: clean all
 	@mkdir -p release/lib release/docs release/examples
 	cp build/luajava.so release/luajava.so 2>/dev/null || cp build_ninja/luajava.so release/luajava.so
 	cp luajava.jar release/
+	cp select_jdk.sh release/
 	cp luaj.sh release/
 	cp lib/jline.jar release/lib/
 	cp -r examples/* release/examples/

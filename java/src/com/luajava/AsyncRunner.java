@@ -27,7 +27,9 @@ public class AsyncRunner {
             Class<?> cls = Class.forName(className);
             if (methodName.equals("new")) return callConstructor(cls, args);
             return callMethod(cls, null, methodName, args);
-        } catch (Throwable e) { return "E:" + e.toString(); }
+        } catch (Throwable e) {
+            return "E:" + e.toString();
+        }
     }
 
     public static String runInstance(Object instance, String methodName, String[] args) {
@@ -35,32 +37,52 @@ public class AsyncRunner {
     }
 
     private static String callConstructor(Class<?> cls, String[] pairs) throws Exception {
-        Constructor<?> bestCtor = null; Object[] bestArgs = null; int bestScore = Integer.MIN_VALUE;
+        Constructor<?> bestCtor = null;
+        Object[] bestArgs = null;
+        int bestScore = Integer.MIN_VALUE;
         for (Constructor<?> c : cls.getConstructors()) {
             Object[] converted = matchArgs(c.getParameterTypes(), pairs);
             if (converted != null) {
                 int score = scoreMethodMatch(c.getParameterTypes(), converted);
-                if (score > bestScore) { bestScore = score; bestCtor = c; bestArgs = converted; }
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestCtor = c;
+                    bestArgs = converted;
+                }
             }
         }
         if (bestCtor == null) return "E:no matching constructor";
-        try { Object obj = bestCtor.newInstance(bestArgs); int oid = LuaAgent.registerObject(obj); return "O:" + oid; }
-        catch (InvocationTargetException e) { return "E:" + e.getCause(); }
+        try {
+            Object obj = bestCtor.newInstance(bestArgs);
+            int oid = LuaAgent.registerObject(obj);
+            return "O:" + oid;
+        } catch (InvocationTargetException e) {
+            return "E:" + e.getCause();
+        }
     }
 
     private static String callMethod(Class<?> cls, Object obj, String name, String[] pairs) throws Exception {
-        Method best = null; Object[] bestArgs = null; int bestScore = Integer.MIN_VALUE;
+        Method best = null;
+        Object[] bestArgs = null;
+        int bestScore = Integer.MIN_VALUE;
         for (Method m : cls.getMethods()) {
             if (!m.getName().equals(name)) continue;
             Object[] converted = matchArgs(m.getParameterTypes(), pairs);
             if (converted != null) {
                 int score = scoreMethodMatch(m.getParameterTypes(), converted);
-                if (score > bestScore) { bestScore = score; best = m; bestArgs = converted; }
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = m;
+                    bestArgs = converted;
+                }
             }
         }
         if (best == null) return "E:no matching method: " + name;
-        try { return serialize(best.invoke(obj, bestArgs)); }
-        catch (InvocationTargetException e) { return "E:" + e.getCause(); }
+        try {
+            return serialize(best.invoke(obj, bestArgs));
+        } catch (InvocationTargetException e) {
+            return "E:" + e.getCause();
+        }
     }
 
     private static int scoreMethodMatch(Class<?>[] pts, Object[] args) {
@@ -83,8 +105,12 @@ public class AsyncRunner {
         if (pairs.length != pt.length * 2) return null;
         Object[] r = new Object[pt.length];
         for (int i = 0; i < pt.length; i++) {
-            try { r[i] = convert(pairs[i*2], pairs[i*2+1], pt[i]); if (r[i] == null) return null; }
-            catch (Exception e) { return null; }
+            try {
+                r[i] = convert(pairs[i * 2], pairs[i * 2 + 1], pt[i]);
+                if (r[i] == null) return null;
+            } catch (Exception e) {
+                return null;
+            }
         }
         return r;
     }
@@ -114,7 +140,27 @@ public class AsyncRunner {
     public static String heavyCalc(String countStr) {
         int n = Integer.parseInt(countStr);
         double sum = 0;
-        for (int i = 0; i < n; i++) for (int j = 1; j <= 100; j++) sum += Math.sin(j) * Math.cos(j);
+        for (int i = 0; i < n; i++) {
+            for (int j = 1; j <= 100; j++) {
+                sum += Math.sin(j) * Math.cos(j);
+            }
+        }
         return String.valueOf(sum);
+    }
+
+    /**
+     * 判断对象是否是指定类的实例（支持接口）
+     * @param obj Java 对象
+     * @param className 类名或接口名（全限定名）
+     * @return true 如果是该类的实例或实现了该接口
+     */
+    public static boolean isInstance(Object obj, String className) {
+        if (obj == null) return false;
+        try {
+            Class<?> cls = Class.forName(className);
+            return cls.isInstance(obj);
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
     }
 }
