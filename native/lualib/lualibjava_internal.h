@@ -17,6 +17,12 @@ typedef struct PromiseEntry {
 
 extern PromiseEntry* promise_registry;
 
+typedef struct {
+    jobject obj;
+    jclass cls;
+    int isClass;
+} JavaUserdata;
+
 // ========== lualib_async.c 导出的函数 ==========
 extern int java_runAsync(lua_State* L);
 extern int java_runAsyncObj(lua_State* L);

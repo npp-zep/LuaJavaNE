@@ -16,11 +16,7 @@ extern int java_getObject(lua_State* L);
 extern int java_runAsyncObj(lua_State* L);
 extern int java_checkPromise(lua_State* L);
 
-typedef struct {
-    jobject obj;
-    jclass  cls;
-    int     isClass;
-} JavaUserdata;
+
 
 typedef struct {
     jobject   obj;
@@ -144,7 +140,40 @@ int new_java_object_ud(lua_State* L, jobject obj) {
     (*env)->DeleteLocalRef(env, classClass);
 
     if (isArray) {
-        // ... 数组分支 ...
+        jsize arrayLength = (*env)->GetArrayLength(env,obj);
+
+        JavaUserdata* ud =(JavaUserdata*)lua_newuserdatauv(L, sizeof(JavaUserdata), 2);
+
+        ud ->obj=(*env)->NewGlobalRef(env,obj);
+        jclass objCls2 =(*env)->NewWeakGlobalRef(env,objCls2);
+        (*env)->DeleteLocalRef(env,objCls2);
+
+        ud ->isClass =0;
+
+        lua_pushinteger(L, arrayLength);
+        lua_setiuservalue(L, -2, 1);
+
+        jclass componentType = (*env)->GetObjectClass(env,objCls);
+        jmethodID getName = (*env)->GetMethodID(env,classClass,"getName","()Ljava/lang/string;");
+        jstring className = (jstring)(*env)->CallObjectMethod(env ,objCls,NULL);
+
+        const char* cname =(*env)->GetStringUTFChars(env,className,NULL);
+
+        int isPrimitiveArray =(cname[1] !='L' && cname[1] !='[');
+
+        lua_pushboolean(L, isPrimitiveArray);
+
+        lua_setiuservalue(L, -2,2);
+
+        (*env)->ReleaseStringUTFChars(env,className,cname);
+        (*env)->DeleteLocalRef(env,className);
+        (*env)->DeleteLocalRef(env,classClass);
+
+        luaL_getmetatable(L, JAVAOBJECT_META);
+        lua_setmetatable(L, -2);
+        (*env)->DeleteLocalRef(env,objCls);
+
+        return 1;
     }
 
     (*env)->DeleteLocalRef(env, objCls);

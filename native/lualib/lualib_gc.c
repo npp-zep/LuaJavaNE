@@ -10,11 +10,7 @@ extern JavaVM* g_jvm;
 extern JNIEnv* getEnv(void);
 
 
-typedef struct {
-    jobject obj;
-    jclass cls;
-    int isclass;
-} JavaUserdata;
+
 
 // ========== 元表名称 ==========
 #define JAVAOBJECT_META "Java.Object"
