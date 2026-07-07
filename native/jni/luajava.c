@@ -1,5 +1,7 @@
 // jni/luajava.c
 #include "luajava.h"
+#include <jni.h>
+#include <lua.h>
 extern int luaopen_java(lua_State* L);
 extern void lua_open_custom_libs(lua_State* L);
 #include "com_luajava_LuaRuntime.h"
@@ -10,10 +12,8 @@ extern void lua_open_custom_libs(lua_State* L);
 #include <string.h>
 #include <pthread.h>
 
+#include "../jni_compat.h"
 
-//#include <sys/syscall.h>   // for SYS_gettid
-//#include <unistd.h>        // for syscall
-//#include <errno.h>         // for EBUSY
 
 JavaVM* g_jvm = NULL;
 // 在 luajava.c 顶部，将静态初始化改为声明
@@ -46,7 +46,7 @@ JNIEnv* getEnv() {
             args.version = JNI_VERSION_1_6;
             args.group = NULL;
             args.name = NULL;
-            (*g_jvm)->AttachCurrentThread(g_jvm, &env, &args);
+            JNI_ATTACH(g_jvm, env);
         }
     }
     return env;

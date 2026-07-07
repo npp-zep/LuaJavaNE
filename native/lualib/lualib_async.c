@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../jni_compat.h"
+
 extern JavaVM* g_jvm;
 extern int new_java_object_ud(lua_State* L, jobject obj);
 
@@ -51,7 +53,7 @@ int java_runAsync(lua_State* L) {
     int pairCount = argCount * 2;
 
     JNIEnv* env = NULL;
-    (*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL);
+    JNI_ATTACH(g_jvm, env);
     if (!env) return 0;
 
     jclass taskCls = (*env)->FindClass(env, "com/luajava/AgentTask");
@@ -97,7 +99,7 @@ int java_runAsyncObj(lua_State* L) {
     int pairCount = argCount * 2;
 
     JNIEnv* env = NULL;
-    (*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL);
+    JNI_ATTACH(g_jvm, env);
     if (!env) return 0;
 
     jclass taskCls = (*env)->FindClass(env, "com/luajava/AgentTask");
@@ -190,7 +192,7 @@ int java_checkPromise(lua_State* L) {
 int java_getObject(lua_State* L) {
     int id = (int)luaL_checkinteger(L, 1);
     JNIEnv* env = NULL;
-    (*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL);
+    JNI_ATTACH(g_jvm, env);
     if (!env) { lua_pushnil(L); return 1; }
 
     jclass agentCls = (*env)->FindClass(env, "com/luajava/LuaAgent");
