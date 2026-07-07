@@ -3,7 +3,7 @@
 #include "lua.h"
 #include "lauxlib.h"
 #include "lualib.h"
-#include <bits/pthread_types.h>
+#include <pthread.h>
 #include <jni.h>
 #include <string.h>
 #include <stdlib.h>
