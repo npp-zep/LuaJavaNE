@@ -39,6 +39,7 @@ jobs:
           cp build/luajava.so release/luajava.so
           cp luajava.jar release/
           cp luaj.sh release/
+          cp select_jdk.sh release/
           cp lib/jline.jar release/lib/
           cp -r examples/* release/examples/
           cp -r docs/* release/docs/
