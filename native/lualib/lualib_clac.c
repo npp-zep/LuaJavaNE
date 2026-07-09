@@ -1,4 +1,4 @@
-// Lua5.4.8/lualib_clac.c — 完整 C99 <math.h> + 全函数批量向量化版本
+// native/lualib/lualib_clac.c — 完整 C99 <math.h> + Sleef SIMD 加速版本
 #include "lua.h"
 #include "lauxlib.h"
 #include "lualib.h"
@@ -8,6 +8,17 @@
 #include <time.h>
 #include <stdint.h>
 
+// ========== Sleef SIMD 加速 ==========
+#include <sleef.h>
+
+#ifdef USE_SLEEF
+#define MATH_FUNC_UNARY(func, x)   Sleef_##func##_f64(x)
+#define MATH_FUNC_BINARY(func, x, y) Sleef_##func##_f64(x, y)
+#else
+#define MATH_FUNC_UNARY(func, x)   func(x)
+#define MATH_FUNC_BINARY(func, x, y) func(x, y)
+#endif
+
 /* ========== 可移植常量 ========== */
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -16,7 +27,7 @@
 #define M_E  2.71828182845904523536
 #endif
 
-/* ========== SIMD 特性检测 ========== */
+/* ========== 手工 SIMD 特性检测（用于四则运算） ========== */
 #if defined(__AVX__)
   #include <immintrin.h>
   #define CLAC_SIMD_AVX 1
@@ -227,7 +238,7 @@ static int clac_batch_div(lua_State *L) {
     return 1;
 }
 
-/* ========== 自动向量化宏：一元函数批量 ========== */
+/* ========== Sleef SIMD 批量一元函数 ========== */
 #define BATCH_UNARY(name, func) \
 static int clac_batch_##name(lua_State *L) { \
     ClacArray *a = (ClacArray*)luaL_checkudata(L, 1, CLAC_ARRAY_META); \
@@ -238,12 +249,13 @@ static int clac_batch_##name(lua_State *L) { \
     double* __restrict da = a->data; \
     double* __restrict dc = c->data; \
     int n = a->len; \
-    _Pragma("omp simd") \
-    for (int i = 0; i < n; i++) { dc[i] = func(da[i]); } \
+    for (int i = 0; i < n; i++) { \
+        dc[i] = MATH_FUNC_UNARY(func, da[i]); \
+    } \
     return 1; \
 }
 
-/* ========== 自动向量化宏：二元函数批量 ========== */
+/* ========== Sleef SIMD 批量二元函数 ========== */
 #define BATCH_BINARY(name, func) \
 static int clac_batch_##name(lua_State *L) { \
     ClacArray *a = (ClacArray*)luaL_checkudata(L, 1, CLAC_ARRAY_META); \
@@ -257,8 +269,9 @@ static int clac_batch_##name(lua_State *L) { \
     double* __restrict db = b->data; \
     double* __restrict dc = c->data; \
     int n = a->len; \
-    _Pragma("omp simd") \
-    for (int i = 0; i < n; i++) { dc[i] = func(da[i], db[i]); } \
+    for (int i = 0; i < n; i++) { \
+        dc[i] = MATH_FUNC_BINARY(func, da[i], db[i]); \
+    } \
     return 1; \
 }
 
@@ -283,7 +296,7 @@ BATCH_UNARY(log,    log)
 BATCH_UNARY(log10,  log10)
 BATCH_UNARY(log2,   log2)
 BATCH_UNARY(log1p,  log1p)
-BATCH_UNARY(sin,    sin)      /* 覆盖原手工 batch_sin，保留编译器向量化 */
+BATCH_UNARY(sin,    sin)
 BATCH_UNARY(cos,    cos)
 BATCH_UNARY(tan,    tan)
 BATCH_UNARY(asin,   asin)
@@ -300,8 +313,37 @@ BATCH_UNARY(erfc,   erfc)
 BATCH_UNARY(tgamma, tgamma)
 BATCH_UNARY(lgamma, lgamma)
 BATCH_UNARY(logb,   logb)
-BATCH_UNARY(deg,    clac_deg_impl)
-BATCH_UNARY(rad,    clac_rad_impl)
+
+/* ========== 角度转换（不使用 Sleef，保留内联） ========== */
+static int clac_batch_deg(lua_State *L) {
+    ClacArray *a = (ClacArray*)luaL_checkudata(L, 1, CLAC_ARRAY_META);
+    ClacArray *c = (ClacArray*)lua_newuserdatauv(L, CLAC_ARRAY_SIZE(a->len), 0);
+    c->len = a->len;
+    luaL_getmetatable(L, CLAC_ARRAY_META);
+    lua_setmetatable(L, -2);
+    double* __restrict da = a->data;
+    double* __restrict dc = c->data;
+    int n = a->len;
+    for (int i = 0; i < n; i++) {
+        dc[i] = da[i] * 180.0 / M_PI;
+    }
+    return 1;
+}
+
+static int clac_batch_rad(lua_State *L) {
+    ClacArray *a = (ClacArray*)luaL_checkudata(L, 1, CLAC_ARRAY_META);
+    ClacArray *c = (ClacArray*)lua_newuserdatauv(L, CLAC_ARRAY_SIZE(a->len), 0);
+    c->len = a->len;
+    luaL_getmetatable(L, CLAC_ARRAY_META);
+    lua_setmetatable(L, -2);
+    double* __restrict da = a->data;
+    double* __restrict dc = c->data;
+    int n = a->len;
+    for (int i = 0; i < n; i++) {
+        dc[i] = da[i] * M_PI / 180.0;
+    }
+    return 1;
+}
 
 /* ========== 生成全部二元批量函数（不含四则） ========== */
 BATCH_BINARY(pow,       pow)
@@ -478,7 +520,7 @@ static const luaL_Reg claclib[] = {
     {"batch_mul",    clac_batch_mul},
     {"batch_div",    clac_batch_div},
 
-    // 自动生成的一元批量函数
+    // Sleef SIMD 一元批量函数
     {"batch_abs",    clac_batch_abs},
     {"batch_floor",  clac_batch_floor},
     {"batch_ceil",   clac_batch_ceil},
@@ -515,7 +557,7 @@ static const luaL_Reg claclib[] = {
     {"batch_deg",    clac_batch_deg},
     {"batch_rad",    clac_batch_rad},
 
-    // 自动生成的二元批量函数
+    // Sleef SIMD 二元批量函数
     {"batch_pow",       clac_batch_pow},
     {"batch_atan2",     clac_batch_atan2},
     {"batch_hypot",     clac_batch_hypot},

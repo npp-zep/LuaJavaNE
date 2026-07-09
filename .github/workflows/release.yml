@@ -17,6 +17,9 @@ jobs:
             arch: x86_64
           - os: macos-latest
             arch: arm64
+          # 可选：macOS Intel
+          # - os: macos-13
+          #   arch: x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -27,17 +30,24 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Download JLine
-        run: |
-          mkdir -p lib
-          wget -q https://repo1.maven.org/maven2/org/jline/jline/3.25.1/jline-3.25.1.jar -O lib/jline.jar
+      # 缓存 C 构建产物（加速后续构建）
+      - name: Cache C build
+        uses: actions/cache@v4
+        with:
+          path: build/
+          key: ${{ runner.os }}-build-${{ hashFiles('native/**', 'lua/**', 'CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-build-
 
       - name: Build Release
         run: |
           make clean && make
           mkdir -p release/lib release/docs release/examples
-          cp build/luajava.so release/luajava.so
+          # 动态库兼容 .so 和 .dylib
+          cp build/luajava.* release/ 2>/dev/null || true
           cp luajava.jar release/
+          cp select_jdk.sh release/
+          cp version.properties release/
           cp luaj.sh release/
           cp lib/jline.jar release/lib/
           cp -r examples/* release/examples/
@@ -46,7 +56,10 @@ jobs:
       - name: Create Release Archive
         run: |
           cd release
-          tar czf ../luajavane-${{ github.ref_name }}-${{ runner.os }}-${{ matrix.arch }}.tar.gz *
+          # 使用小写项目名 + 版本 + 平台
+          ARCHIVE_NAME="luajavane-${{ github.ref_name }}-${{ runner.os }}-${{ matrix.arch }}"
+          tar czf "../${ARCHIVE_NAME}.tar.gz" *
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -55,25 +68,37 @@ jobs:
           path: |
             luajavane-*.tar.gz
             release/luajava.jar
-            release/luajava.so
+            release/luajava.*
 
   publish:
     needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
       - name: Publish Release
         run: |
+          # 收集所有产物（tar.gz + jar + 动态库）
           ASSETS=""
-          for f in artifacts/*/*.tar.gz artifacts/*/luajava.jar artifacts/*/luajava.so; do
-            [ -f "$f" ] && ASSETS="$ASSETS $f"
+          for f in artifacts/*/*.tar.gz artifacts/*/luajava.jar artifacts/*/luajava.*; do
+            if [ -f "$f" ]; then
+              # 跳过非库文件（如 luajava.sh 等）
+              case "$f" in
+                *.so|*.dylib|*.jar|*.tar.gz) ASSETS="$ASSETS $f" ;;
+              esac
+            fi
           done
+          
+          # 从 version.properties 读取版本号
+          VERSION=$(grep '^PROJECT_VERSION=' version.properties | cut -d'=' -f2 | tr -d '\r')
+          RELEASE_TITLE="LuaJavaNE ${VERSION} (${{ github.ref_name }})"
+          
           gh release create ${{ github.ref_name }} $ASSETS \
-            --title "LuaJavaNE ${{ github.ref_name }}" \
+            --title "$RELEASE_TITLE" \
             --generate-notes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
