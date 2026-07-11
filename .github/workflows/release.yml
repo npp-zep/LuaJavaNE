@@ -31,6 +31,31 @@ jobs:
         run: |
           make release
 
+      - name: Strip Debug Symbols
+        run: |
+          # 去除调试符号，减小二进制文件大小
+          # 查找 release 目录下的所有 ELF 或 Mach-O 二进制文件
+          find release -type f -exec file {} \; | grep -E "ELF.*executable|Mach-O.*executable|ELF.*shared object|Mach-O.*dynamically linked" | cut -d: -f1 | while read -r binary; do
+            echo "Stripping: $binary"
+            strip --strip-debug "$binary" 2>/dev/null || strip -S "$binary" 2>/dev/null || true
+          done
+          
+          # 针对 macOS，额外处理 dylib
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            find release -name "*.dylib" -type f | while read -r binary; do
+              echo "Stripping dylib: $binary"
+              strip -S "$binary" 2>/dev/null || true
+            done
+          fi
+          
+          # 针对 Linux，额外处理 .so 文件
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            find release -name "*.so" -type f | while read -r binary; do
+              echo "Stripping shared library: $binary"
+              strip --strip-unneeded "$binary" 2>/dev/null || true
+            done
+          fi
+
       - name: Create Release Archive
         run: |
           # 获取版本号
