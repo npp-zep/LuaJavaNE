@@ -22,10 +22,16 @@ public class LuaRuntime implements AutoCloseable {
 
     private static void loadLibrary() {
         if (loaded) return;
+        
+        // 1. 从系统属性获取库路径
         String propPath = System.getProperty("luajava.library.path");
         if (propPath != null && tryLoad(propPath)) return;
+        
+        // 2. 从环境变量获取库路径
         String envPath = System.getenv("LUAJAVA_LIBRARY_PATH");
         if (envPath != null && tryLoad(envPath)) return;
+        
+        // 3. 尝试系统库路径
         try {
             System.loadLibrary("luajava");
             loaded = true;
@@ -33,26 +39,44 @@ public class LuaRuntime implements AutoCloseable {
         } catch (UnsatisfiedLinkError e) {
             // 继续尝试
         }
+        
+        // 4. 在当前目录和 build 目录查找（支持 .so 和 .dylib）
         String cwd = System.getProperty("user.dir");
-        for (String name : new String[]{"build/luajava.so", "luajava.so", "libluajava.so"}) {
-            if (new File(cwd, name).exists()) {
-                System.load(new File(cwd, name).getAbsolutePath());
-                loaded = true;
-                return;
-            }
+        String osName = System.getProperty("os.name").toLowerCase();
+        String libExt = osName.contains("mac") ? "dylib" : "so";
+        
+        String[] searchPaths = {
+            cwd + "/build/luajava." + libExt,
+            cwd + "/luajava." + libExt,
+            cwd + "/libluajava." + libExt,
+            cwd + "/build/luajava.so",
+            cwd + "/luajava.so",
+            cwd + "/build/luajava.dylib",
+            cwd + "/luajava.dylib"
+        };
+        
+        for (String path : searchPaths) {
+            if (tryLoad(path)) return;
         }
-        throw new UnsatisfiedLinkError("Cannot find luajava.so");
+        
+        throw new UnsatisfiedLinkError(
+            "Cannot find luajava library. Tried:\n" +
+            String.join("\n  ", searchPaths) +
+            "\nSet -Dluajava.library.path=... or LUAJAVA_LIBRARY_PATH env var"
+        );
     }
 
     private static boolean tryLoad(String path) {
         try {
-            if (new File(path).exists()) {
-                System.load(new File(path).getAbsolutePath());
+            File file = new File(path);
+            if (file.exists()) {
+                System.load(file.getAbsolutePath());
                 loaded = true;
+                LOGGER.info("Loaded luajava library from: " + path);
                 return true;
             }
         } catch (UnsatisfiedLinkError e) {
-            // 忽略
+            LOGGER.fine("Failed to load from " + path + ": " + e.getMessage());
         }
         return false;
     }

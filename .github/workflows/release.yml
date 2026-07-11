@@ -17,9 +17,6 @@ jobs:
             arch: x86_64
           - os: macos-latest
             arch: arm64
-          # 可选：macOS Intel
-          # - os: macos-13
-          #   arch: x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -30,45 +27,26 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # 缓存 C 构建产物（加速后续构建）
-      - name: Cache C build
-        uses: actions/cache@v4
-        with:
-          path: build/
-          key: ${{ runner.os }}-build-${{ hashFiles('native/**', 'lua/**', 'CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-build-
-
       - name: Build Release
         run: |
-          make clean && make
-          mkdir -p release/lib release/docs release/examples
-          # 动态库兼容 .so 和 .dylib
-          cp build/luajava.* release/ 2>/dev/null || true
-          cp luajava.jar release/
-          cp select_jdk.sh release/
-          cp version.properties release/
-          cp luaj.sh release/
-          cp lib/jline.jar release/lib/
-          cp -r examples/* release/examples/
-          cp -r docs/* release/docs/
+          make release
 
       - name: Create Release Archive
         run: |
+          # 获取版本号
+          VERSION=$(grep '^PROJECT_VERSION' version.properties | cut -d'=' -f2 | tr -d ' ')
+          if [ -z "$VERSION" ]; then
+            VERSION=${GITHUB_REF_NAME#v}
+          fi
+          
           cd release
-          # 使用小写项目名 + 版本 + 平台
-          ARCHIVE_NAME="luajavane-${{ github.ref_name }}-${{ runner.os }}-${{ matrix.arch }}"
-          tar czf "../${ARCHIVE_NAME}.tar.gz" *
-          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV
+          tar czf ../luajavane-${VERSION}-${{ runner.os }}-${{ matrix.arch }}.tar.gz *
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: luajavane-${{ runner.os }}-${{ matrix.arch }}
-          path: |
-            luajavane-*.tar.gz
-            release/luajava.jar
-            release/luajava.*
+          path: luajavane-*.tar.gz
 
   publish:
     needs: build
@@ -80,25 +58,32 @@ jobs:
         with:
           path: artifacts
 
+      - name: Get Version
+        id: get_version
+        run: |
+          VERSION=$(grep '^PROJECT_VERSION' version.properties | cut -d'=' -f2 | tr -d ' ')
+          if [ -z "$VERSION" ]; then
+            VERSION=${GITHUB_REF_NAME#v}
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Publish Release
         run: |
-          # 收集所有产物（tar.gz + jar + 动态库）
+          # 收集所有平台的 tar.gz 压缩包
           ASSETS=""
-          for f in artifacts/*/*.tar.gz artifacts/*/luajava.jar artifacts/*/luajava.*; do
+          for f in artifacts/*/*.tar.gz; do
             if [ -f "$f" ]; then
-              # 跳过非库文件（如 luajava.sh 等）
-              case "$f" in
-                *.so|*.dylib|*.jar|*.tar.gz) ASSETS="$ASSETS $f" ;;
-              esac
+              ASSETS="$ASSETS $f"
             fi
           done
           
-          # 从 version.properties 读取版本号
-          VERSION=$(grep '^PROJECT_VERSION=' version.properties | cut -d'=' -f2 | tr -d '\r')
-          RELEASE_TITLE="LuaJavaNE ${VERSION} (${{ github.ref_name }})"
+          if [ -z "$ASSETS" ]; then
+            echo "No assets found to upload!"
+            exit 1
+          fi
           
           gh release create ${{ github.ref_name }} $ASSETS \
-            --title "$RELEASE_TITLE" \
+            --title "LuaJavaNE ${{ steps.get_version.outputs.VERSION }}" \
             --generate-notes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

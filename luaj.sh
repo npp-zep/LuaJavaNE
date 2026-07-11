@@ -8,12 +8,28 @@ fi
 MIN_JDK="${MIN_JDK_VERSION:-17}"
 REC_JDK="${RECOMMENDED_JDK_VERSION:-21}"
 
+# ===== 平台检测 =====
+UNAME_S=$(uname -s)
+if [ "$UNAME_S" = "Darwin" ]; then
+    LIB_EXT="dylib"
+else
+    LIB_EXT="so"
+fi
 
-# ===== 优先使用当前目录的 .so =====
-if [ -f "$SCRIPT_DIR/luajava.so" ]; then
+# ===== 优先使用当前目录的动态库（兼容 .so 和 .dylib） =====
+SO_PATH=""
+if [ -f "$SCRIPT_DIR/luajava.$LIB_EXT" ]; then
+    SO_PATH="$SCRIPT_DIR/luajava.$LIB_EXT"
+elif [ -f "$SCRIPT_DIR/build/luajava.$LIB_EXT" ]; then
+    SO_PATH="$SCRIPT_DIR/build/luajava.$LIB_EXT"
+elif [ -f "$SCRIPT_DIR/luajava.so" ]; then
     SO_PATH="$SCRIPT_DIR/luajava.so"
 elif [ -f "$SCRIPT_DIR/build/luajava.so" ]; then
     SO_PATH="$SCRIPT_DIR/build/luajava.so"
+elif [ -f "$SCRIPT_DIR/luajava.dylib" ]; then
+    SO_PATH="$SCRIPT_DIR/luajava.dylib"
+elif [ -f "$SCRIPT_DIR/build/luajava.dylib" ]; then
+    SO_PATH="$SCRIPT_DIR/build/luajava.dylib"
 else
     SO_PATH=""
 fi
@@ -22,7 +38,7 @@ JAR_PATH="$SCRIPT_DIR/luajava.jar"
 JLINE_PATH="$SCRIPT_DIR/lib/jline.jar"
 
 JAVA_OPTS=""
-if [ -f "$SO_PATH" ]; then
+if [ -n "$SO_PATH" ]; then
     JAVA_OPTS="-Dluajava.library.path=$SO_PATH"
 fi
 JAVA_OPTS="$JAVA_OPTS -Dorg.jline.terminal.jna=false -Dorg.jline.terminal.jansi=false -Dorg.jline.terminal.ffm=false -Djline.native=false"
@@ -79,6 +95,17 @@ detect_lua_paths() {
 }
 detect_lua_paths
 
+# ===== 选择 JDK =====
+if [ -f "$SCRIPT_DIR/select_jdk.sh" ]; then
+    JAVA_HOME_DIR=$("$SCRIPT_DIR/select_jdk.sh")
+    JAVA_BIN="$JAVA_HOME_DIR/bin/java"
+else
+    JAVA_BIN="java"
+fi
+
 # ===== 启动 =====
-JAVA_BIN=$(./select_jdk.sh)/bin/java
-LD_PRELOAD="$SO_PATH:$LD_PRELOAD" "$JAVA_BIN" $JAVA_OPTS -cp "$JAR_PATH:$JLINE_PATH" com.luajava.LuaJMain "$@"
+if [ -n "$SO_PATH" ]; then
+    LD_PRELOAD="$SO_PATH:$LD_PRELOAD" "$JAVA_BIN" $JAVA_OPTS -cp "$JAR_PATH:$JLINE_PATH" com.luajava.LuaJMain "$@"
+else
+    "$JAVA_BIN" $JAVA_OPTS -cp "$JAR_PATH:$JLINE_PATH" com.luajava.LuaJMain "$@"
+fi
