@@ -1149,118 +1149,201 @@ static int java_complete(lua_State* L) {
 }
 
 
-// ========== 跨语言全局存储 ==========
+// ========== 跨语言全局存储 (哈希表优化版) ==========
+#define INITIAL_BUCKETS 1024
+
 typedef struct StoreEntry {
     char* key;
     int type;
-    lua_Number numVal;
-    lua_Integer intVal;
+    union {
+        lua_Number numVal;
+        lua_Integer intVal;
+        char* strVal;
+        int boolVal;
+    } value;
     int isInteger;
-    char* strVal;
-    int boolVal;
     struct StoreEntry* next;
 } StoreEntry;
 
-static StoreEntry* store_registry = NULL;
+static StoreEntry** store_hash = NULL;
+static int bucket_count = INITIAL_BUCKETS;
+static int total_entries = 0;
+
+// FNV-1a 哈希算法 (快速且分布均匀)
+static unsigned int hash_key(const char* key) {
+    unsigned int hash = 2166136261u;
+    while (*key) {
+        hash ^= (unsigned char)(*key++);
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+// 查找或创建条目 (减少重复代码)
+static StoreEntry* find_or_create_entry(lua_State* L, const char* key, int create) {
+    if (!store_hash) {
+        store_hash = (StoreEntry**)calloc(bucket_count, sizeof(StoreEntry*));
+    }
+    
+    unsigned int h = hash_key(key) % bucket_count;
+    StoreEntry* e = store_hash[h];
+    while (e) {
+        if (strcmp(e->key, key) == 0) return e;
+        e = e->next;
+    }
+    
+    if (!create) return NULL;
+    
+    // 负载因子超过0.75时扩容
+    if (total_entries > bucket_count * 0.75) {
+        int old_count = bucket_count;
+        bucket_count *= 2;
+        StoreEntry** new_hash = (StoreEntry**)calloc(bucket_count, sizeof(StoreEntry*));
+        
+        for (int i = 0; i < old_count; i++) {
+            StoreEntry* entry = store_hash[i];
+            while (entry) {
+                StoreEntry* next = entry->next;
+                unsigned int new_h = hash_key(entry->key) % bucket_count;
+                entry->next = new_hash[new_h];
+                new_hash[new_h] = entry;
+                entry = next;
+            }
+        }
+        free(store_hash);
+        store_hash = new_hash;
+        h = hash_key(key) % bucket_count;
+    }
+    
+    e = (StoreEntry*)malloc(sizeof(StoreEntry));
+    e->key = strdup(key);
+    e->value.strVal = NULL;
+    e->type = LUA_TNIL;
+    e->isInteger = 0;
+    e->next = store_hash[h];
+    store_hash[h] = e;
+    total_entries++;
+    return e;
+}
 
 static int java_store(lua_State* L) {
     const char* key = luaL_checkstring(L, 1);
-
-  
-    StoreEntry* e = store_registry;
-    while (e) {
-        if (strcmp(e->key, key) == 0) {
-            if (e->strVal) { free(e->strVal); e->strVal = NULL; }
-            int t = lua_type(L, 2);
-            e->type = t;
-            switch (t) {
-                case LUA_TNUMBER:
-                    if (lua_isinteger(L, 2)) {
-                        e->intVal = lua_tointeger(L, 2);
-                        e->isInteger = 1;
-                    } else {
-                        e->numVal = lua_tonumber(L, 2);
-                        e->isInteger = 0;
-                    }
-                    break;
-                case LUA_TSTRING: e->strVal = strdup(lua_tostring(L, 2)); break;
-                case LUA_TBOOLEAN: e->boolVal = lua_toboolean(L, 2); break;
-                default: e->type = LUA_TNIL; break;
-            }
-            return 0;
-        }
-        e = e->next;
+    StoreEntry* e = find_or_create_entry(L, key, 1);
+    
+    // 释放旧字符串 (仅当之前存储的是字符串)
+    if (e->type == LUA_TSTRING && e->value.strVal) {
+        free(e->value.strVal);
+        e->value.strVal = NULL;
     }
-    e = (StoreEntry*)malloc(sizeof(StoreEntry));
-    e->key = strdup(key);
-    e->strVal = NULL;
+    
     int t = lua_type(L, 2);
     e->type = t;
+    
     switch (t) {
         case LUA_TNUMBER:
             if (lua_isinteger(L, 2)) {
-                e->intVal = lua_tointeger(L, 2);
+                e->value.intVal = lua_tointeger(L, 2);
                 e->isInteger = 1;
             } else {
-                e->numVal = lua_tonumber(L, 2);
+                e->value.numVal = lua_tonumber(L, 2);
                 e->isInteger = 0;
             }
             break;
-        case LUA_TSTRING: e->strVal = strdup(lua_tostring(L, 2)); break;
-        case LUA_TBOOLEAN: e->boolVal = lua_toboolean(L, 2); break;
-        default: e->type = LUA_TNIL; break;
+        case LUA_TSTRING:
+            e->value.strVal = strdup(lua_tostring(L, 2));
+            break;
+        case LUA_TBOOLEAN:
+            e->value.boolVal = lua_toboolean(L, 2);
+            break;
+        default:
+            e->type = LUA_TNIL;
+            break;
     }
-    e->next = store_registry;
-    store_registry = e;
-
-  
     return 0;
 }
 
 static int java_fetch(lua_State* L) {
     const char* key = luaL_checkstring(L, 1);
-
-  
-    StoreEntry* e = store_registry;
+    
+    if (!store_hash) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    unsigned int h = hash_key(key) % bucket_count;
+    StoreEntry* e = store_hash[h];
     while (e) {
         if (strcmp(e->key, key) == 0) {
             switch (e->type) {
                 case LUA_TNUMBER:
-                    if (e->isInteger) lua_pushinteger(L, e->intVal);
-                    else lua_pushnumber(L, e->numVal);
+                    if (e->isInteger) lua_pushinteger(L, e->value.intVal);
+                    else lua_pushnumber(L, e->value.numVal);
                     break;
-                case LUA_TSTRING: lua_pushstring(L, e->strVal); break;
-                case LUA_TBOOLEAN: lua_pushboolean(L, e->boolVal); break;
-                default: lua_pushnil(L); break;
+                case LUA_TSTRING:
+                    lua_pushstring(L, e->value.strVal);
+                    break;
+                case LUA_TBOOLEAN:
+                    lua_pushboolean(L, e->value.boolVal);
+                    break;
+                default:
+                    lua_pushnil(L);
+                    break;
             }
             return 1;
         }
         e = e->next;
     }
-
-    
-    lua_pushnil(L); return 1;
+    lua_pushnil(L);
+    return 1;
 }
 
 static int java_deleteStore(lua_State* L) {
     const char* key = luaL_checkstring(L, 1);
-
-  
+    
+    if (!store_hash) return 0;
+    
+    unsigned int h = hash_key(key) % bucket_count;
     StoreEntry* prev = NULL;
-    StoreEntry* e = store_registry;
+    StoreEntry* e = store_hash[h];
+    
     while (e) {
         if (strcmp(e->key, key) == 0) {
             if (prev) prev->next = e->next;
-            else store_registry = e->next;
+            else store_hash[h] = e->next;
+            
             free(e->key);
-            if (e->strVal) free(e->strVal);
+            if (e->type == LUA_TSTRING && e->value.strVal) {
+                free(e->value.strVal);
+            }
             free(e);
-            break;
+            total_entries--;
+            return 0;
         }
         prev = e;
         e = e->next;
     }
+    return 0;
+}
 
+// 清理函数 (防止内存泄漏)
+static int java_cleanup(lua_State* L) {
+    if (!store_hash) return 0;
+    
+    for (int i = 0; i < bucket_count; i++) {
+        StoreEntry* e = store_hash[i];
+        while (e) {
+            StoreEntry* next = e->next;
+            free(e->key);
+            if (e->type == LUA_TSTRING && e->value.strVal) {
+                free(e->value.strVal);
+            }
+            free(e);
+            e = next;
+        }
+    }
+    free(store_hash);
+    store_hash = NULL;
+    total_entries = 0;
     return 0;
 }
 static const luaL_Reg javalib[] = {
