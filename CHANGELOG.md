@@ -1,3 +1,49 @@
+## [2.2.4] - 2026-07-17
+### Added
+- **Java arrays as Lua userdata**: automatic array detection and metadata caching when creating Java object wrappers
+  - Array length and type info stored in userdata extra slots
+  - Proper array element access and `#` length retrieval from Lua side
+  - Supports primitive arrays (int[], double[], boolean[]) and object arrays (String[])
+
+### Changed
+- **Optimized `java.store` with hash table**: replaced linear linked-list search with FNV-1a hash table
+  - O(1) average lookup time vs O(n) linear scan
+  - Dynamic bucket resizing at 0.75 load factor
+  - Reduced memory overhead with union type for value storage
+  - Added `java.cleanup()` for manual GC of store memory
+- **Stripped logging from LuaAgent**: removed all `LOGGER.debug/info/warning/severe` calls for production
+  - All core functionality preserved (statistics, registry management, thread pool control, timeout handling)
+
+### Fixed
+- **CI build failure on GitHub Actions**:
+  - Removed non-standard `bits/pthread_types.h` include
+  - Fixed JNI `AttachCurrentThread` type warning
+  - Updated workflow for multi-platform release artifacts
+
+
+## [2.2.3] - 2026-07-09
+### Added
+- **Multi-platform Release**: Linux x86_64, Linux ARM64, macOS ARM64 pre-built packages
+- **version.properties**: single source of truth for project version/metadata
+- **Examples**: `examples/hello.lua`, `examples/async.lua`, `examples/clac.lua`
+- **make release**: one-step packaging into `release/` directory
+- **helpRepl()**: separate REPL-specific help message
+- Cross-platform LuaRocks support via `LD_PRELOAD` + `LUA_PATH`/`LUA_CPATH` detection
+
+### Changed
+- `LuaJMain.java` reads version/copyright/license from system properties
+- `luaj.sh` auto-detects Lua module paths on Linux/macOS/Termux
+- CI/CD: matrix build for multi-platform releases, fixed test workflow
+- `_VERSION` now shows `LuaJavaNE 2.2.3 (Lua x.x.x, PUC-Rio)`
+
+### Fixed
+- External Lua C extensions (e.g. `lfs.so`) now load correctly via `LD_PRELOAD`
+- Release package now includes `lib/jline.jar`
+- `copyright`/`credits`/`license` no longer show duplicate help text
+- Compilation warning in `lualibjava.c` (array index out of bounds)
+
+
+
 ## [2.2.1] - 2026-06-19
 ### Added
 - **Multi-platform Release**: Linux x86_64, Linux ARM64, macOS ARM64 pre-built packages
