@@ -322,11 +322,14 @@ git push origin feature/my-feature
 ```
 
 ---
+## 许可证
 
-许可证
+本项目主体采用 MIT License。
 
-MIT License。
-本项目包含 Lua 5.4.8 (MIT)、JLine 3 (BSD-3)、JUnit 5 (EPL-1.0)、Sleef (Boost Software License 1.0)
+### 第三方依赖
+- **Lua 5.4.8** — MIT License
+- **JLine 3** — BSD-3-Clause License
+- **Sleef** — Boost Software License 1.0
+- **JUnit 5** — EPL-1.0（仅用于测试，不包含在发布包中）
 
 作者: npp-zep
-
