@@ -15,45 +15,31 @@ endif()
 
 project(LuaJavaNE VERSION ${PROJECT_VERSION} LANGUAGES C)
 
-# ========== 1. Lua 5.4.8 源码 ==========
-set(LUA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lua/lua-5.4.8/src")
-set(NATIVE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/native")
-set(SLEEF_DIR "${NATIVE_DIR}/libs/sleef")
+# ========== 1. 自动检测 Lua 源码 ==========
+# 查找 lua/lua-* 目录
+file(GLOB LUA_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/lua/lua-*")
+if(NOT LUA_DIRS)
+    message(FATAL_ERROR "No Lua source directory found in lua/")
+endif()
 
-file(GLOB LUA_CORE_SRCS
-    "${LUA_DIR}/lapi.c"
-    "${LUA_DIR}/lauxlib.c"
-    "${LUA_DIR}/lbaselib.c"
-    "${LUA_DIR}/lcode.c"
-    "${LUA_DIR}/lcorolib.c"
-    "${LUA_DIR}/lctype.c"
-    "${LUA_DIR}/ldblib.c"
-    "${LUA_DIR}/ldebug.c"
-    "${LUA_DIR}/ldo.c"
-    "${LUA_DIR}/ldump.c"
-    "${LUA_DIR}/lfunc.c"
-    "${LUA_DIR}/lgc.c"
-    "${LUA_DIR}/linit.c"
-    "${LUA_DIR}/liolib.c"
-    "${LUA_DIR}/llex.c"
-    "${LUA_DIR}/lmathlib.c"
-    "${LUA_DIR}/lmem.c"
-    "${LUA_DIR}/loadlib.c"
-    "${LUA_DIR}/lobject.c"
-    "${LUA_DIR}/lopcodes.c"
-    "${LUA_DIR}/loslib.c"
-    "${LUA_DIR}/lparser.c"
-    "${LUA_DIR}/lstate.c"
-    "${LUA_DIR}/lstring.c"
-    "${LUA_DIR}/lstrlib.c"
-    "${LUA_DIR}/ltable.c"
-    "${LUA_DIR}/ltablib.c"
-    "${LUA_DIR}/ltm.c"
-    "${LUA_DIR}/lundump.c"
-    "${LUA_DIR}/lutf8lib.c"
-    "${LUA_DIR}/lvm.c"
-    "${LUA_DIR}/lzio.c"
-)
+# 使用第一个匹配的目录
+list(GET LUA_DIRS 0 LUA_BASE_DIR)
+set(LUA_DIR "${LUA_BASE_DIR}/src")
+
+if(NOT EXISTS "${LUA_DIR}")
+    message(FATAL_ERROR "Lua source directory not found: ${LUA_DIR}")
+endif()
+
+message(STATUS "Using Lua source: ${LUA_DIR}")
+
+# 收集所有 .c 文件
+file(GLOB LUA_CORE_SRCS "${LUA_DIR}/*.c")
+if(NOT LUA_CORE_SRCS)
+    message(FATAL_ERROR "No .c files found in ${LUA_DIR}")
+endif()
+
+# 排除 luac.c（如果存在）
+list(REMOVE_ITEM LUA_CORE_SRCS "${LUA_DIR}/luac.c")
 
 add_library(lua STATIC ${LUA_CORE_SRCS})
 target_include_directories(lua PUBLIC "${LUA_DIR}")
@@ -72,6 +58,9 @@ find_package(JNI REQUIRED)
 include_directories(${JNI_INCLUDE_DIRS})
 
 # ========== 3. Sleef SIMD 库（头文件只有，不需要链接） ==========
+set(NATIVE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/native")
+set(SLEEF_DIR "${NATIVE_DIR}/libs/sleef")
+
 if(EXISTS "${SLEEF_DIR}/sleef.h")
     set(USE_SLEEF TRUE)
     message(STATUS "Sleef found, enabling SIMD acceleration in clac")
@@ -157,6 +146,7 @@ endif()
 message(STATUS "LuaJavaNE build configuration:")
 message(STATUS "  Version: ${PROJECT_VERSION}")
 message(STATUS "  Lua source dir: ${LUA_DIR}")
+message(STATUS "  Lua source files: ${LUA_CORE_SRCS}")
 message(STATUS "  JNI include: ${JNI_INCLUDE_DIRS}")
 message(STATUS "  JNI libraries: ${JNI_LIBRARIES}")
 message(STATUS "  Dynamic library suffix: ${LIB_SUFFIX}")

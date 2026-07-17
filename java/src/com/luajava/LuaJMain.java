@@ -29,9 +29,27 @@ public class LuaJMain {
         String osName = System.getProperty("os.name");
         String osArch = System.getProperty("os.arch");
         System.out.println(NAME + " " + VERSION + " (" + buildTime + ")");
+        System.out.println("Lua version: " + getLuaVersion());
         System.out.println("[" + javaVendor + " JDK " + javaVer + " on " + osName + " " + osArch + "]");
         System.out.println("Built with: " + getCCVersion());
         System.out.println("Type \"help\", \"copyright\", \"credits\" or \"license\" for more information.");
+    }
+
+    static String getLuaVersion() {
+        LuaRuntime rt = null;
+        try {
+            rt = new LuaRuntime();
+            // 确保 _VERSION 存在
+            rt.doString("_VERSION = _VERSION or 'unknown'");
+            Object ver = rt.getGlobal("_VERSION");
+            return ver != null ? ver.toString() : "unknown";
+        } catch (Exception e) {
+            return "unknown";
+        } finally {
+            if (rt != null) {
+                try { rt.close(); } catch (Exception ignored) {}
+            }
+        }
     }
 
     static String getBuildTime() {
