@@ -1,6 +1,6 @@
 LuaJavaNE API Reference
 
-完整的双向互操作 API 文档。涵盖 Lua 调用 Java、Java 调用 Lua、异步任务、高性能数学库、兼容层工具等。
+完整的双向互操作 API 文档。涵盖 Lua 调用 Java、Java 调用 Lua、异步任务、高性能数学库等核心功能。
 
 ---
 
@@ -60,7 +60,7 @@ print(s:toUpperCase())     -- "HELLO"
 print(s:substring(0, 2))   -- "He"
 ```
 
-注意：某些方法签名可能无法自动匹配（尤其无参方法），建议使用 Java 辅助类或通过 Ref 模块间接调用。
+注意：某些方法签名可能无法自动匹配（尤其无参方法），建议使用 Java 辅助类或通过其他方式间接调用。
 
 ---
 
@@ -129,13 +129,7 @@ local s = java.toString(javaObject)
 
 java.store(key, value) / java.fetch(key) / java.deleteStore(key)
 
-跨语言全局键值存储（C 端哈希表），适合高频数据共享。
-
-```lua
-java.store("count", 100)
-local c = java.fetch("count")   -- 100
-java.deleteStore("count")
-```
+跨语言全局键值存储（C 端哈希表），适合高频数据共享（详见第 5 节）。
 
 ---
 
@@ -392,149 +386,17 @@ local s = clac.batch_sin(a)
 
 ---
 
-5. 兼容层（Compat 包）
+5. 全局存储
 
-所有类位于 com.luajava.compat 包，通过 java.import 导入。
-
-5.1 DataCompat – 数据处理
+C 端全局哈希表（键值对），适合高频共享数据，避免 JNI 开销。
 
 ```lua
-local Data = java.import("com.luajava.compat.DataCompat")
+java.store("key", "value")      -- 存储
+local val = java.fetch("key")   -- 读取
+java.deleteStore("key")         -- 删除
 ```
 
-方法 说明
-md5(s) MD5 哈希（十六进制）
-sha1(s) SHA-1
-sha256(s) SHA-256
-sha512(s) SHA-512
-base64Encode(s) Base64 编码
-base64Decode(s) Base64 解码
-randomString(length) 随机字母数字串
-capitalize(s) 首字母大写
-toInt(s) 安全转整数，失败返回 nil
-toIntDefault(s, default) 带默认值
-isInt(s) 判断是否为整数
-toLong(s) / toDouble 类似 -
-regexMatch(pattern, input) 全匹配（返回 boolean）
-regexFind(pattern, input) 查找第一个匹配（返回匹配串或 nil）
-regexFindAll(pattern, input) 返回所有匹配的数组
-regexReplace(pattern, input, replacement) 替换所有匹配
-
----
-
-5.2 NetCompat – HTTP 客户端
-
-```lua
-local Net = java.import("com.luajava.compat.NetCompat")
-```
-
-方法 说明
-httpGet(url) GET 请求，返回响应体字符串（失败抛异常）
-httpPost(url, body) POST 请求，body 为字符串
-httpCode(url) 返回 HTTP 状态码（整数）
-
-建议使用 pcall 包装。
-
----
-
-5.3 TimeCompat – 日期时间
-
-```lua
-local Time = java.import("com.luajava.compat.TimeCompat")
-```
-
-方法 说明
-now() ISO 8601 UTC 时间字符串（如 2026-07-17T12:34:56Z）
-nowLocal() 本地时间格式化（如 2026-07-17 20:34:56）
-timestamp() Unix 毫秒时间戳 (number)
-year() / month() / day() 当前年/月/日（整数）
-formatTime(ms) 将毫秒戳转为 ISO 字符串
-
----
-
-5.4 ShellCompat – 系统信息
-
-```lua
-local Shell = java.import("com.luajava.compat.ShellCompat")
-```
-
-方法 说明
-osName() 操作系统名
-osVersion() 系统版本
-userHome() 用户主目录路径
-userDir() 当前工作目录
-availableProcessors() CPU 核心数
-getenv(name) 环境变量值
-getProperty(key) Java 系统属性
-
----
-
-5.5 Ref – 内存管理 & 对象引用
-
-提供灵活的引用类型（强、软、弱、虚）和内存监控。
-
-```lua
-local Ref = java.import("com.luajava.compat.Ref")
-```
-
-创建引用
-
-方法 说明
-Ref.holdStrong(obj) 强引用（防止 GC）
-Ref.holdSoft(obj) 软引用（内存不足时回收）
-Ref.holdWeak(obj) 弱引用（GC 时立即回收）
-Ref.holdPhantom(obj) 虚引用（仅用于跟踪回收）
-
-所有方法返回整数引用 ID，或 nil（失败）。
-
-操作引用
-
-方法 说明
-Ref.get(id) 获取引用的对象，若已回收返回 nil
-Ref.release(id) 手动释放引用
-Ref.isAlive(id) 检查对象是否存活（返回 boolean）
-Ref.getAllIds() 返回所有引用 ID 的数组（整数列表）
-
-内存统计
-
-方法 说明
-Ref.getUsedMemory() 已用内存（字节）
-Ref.getFreeMemory() 可用内存
-Ref.getTotalMemory() 当前总内存
-Ref.getMaxMemory() 最大可用内存
-Ref.getMemoryUsagePercent() 使用百分比（0~100）
-Ref.getMemoryInfo() 返回数组 [used, free, total, max, usedMB, freeMB, totalMB, maxMB]
-
-GC 控制与统计
-
-方法 说明
-Ref.gc() 建议 JVM 执行垃圾回收
-Ref.getGCCount() 总 GC 次数
-Ref.getGCTime() 总 GC 耗时（毫秒）
-
-引用计数
-
-方法 说明
-Ref.getStrongCount() 强引用数量
-Ref.getSoftCount() 软引用数量
-Ref.getWeakCount() 弱引用数量
-Ref.getPhantomCount() 虚引用数量
-Ref.getTotalCount() 总引用数量
-
-示例：参考 examples/test_ref.lua。
-
----
-
-5.6 其他兼容工具（按需导入）
-
-· FileCompat：文件读写、目录操作（readFile, writeFile, exists, listDir, delete, fileSize）
-· ProcessCompat：执行外部命令（exec, execExitCode）
-· StringCompat：字符串工具（getBytes, substring）
-· CollectionCompat：ArrayList/HashMap 辅助
-· URLCompat：URL 编解码（encode, decode）
-· UUIDCompat：生成 UUID（randomUUID, fromString）
-
-以上工具均可通过 java.import("com.luajava.compat.XxxCompat") 使用。
+性能对比见 bench_store_calc.lua。
 
 ---
 
@@ -561,7 +423,7 @@ boolean boolean / Boolean boolean
 number（整数） int / long / Integer / Long number（整数）
 number（浮点） double / float / Double / Float number（浮点）
 string String string
-userdata（Java 对象） 原 Java 对象类型 同类型 userdata
+userdata（Java） 原 Java 对象类型 同类型 userdata
 function（Lua） 可转为 LuaFunctionObj（传递给 Java） 不支持自动转换
 
 数组返回值：Java 数组（如 String[]）在 Lua 中表现为 userdata，支持 # 获取长度，支持索引访问（从 0 开始）。
@@ -603,17 +465,6 @@ local a = clac.array(1000)
 for i = 1, 1000 do a[i] = i end
 local b = clac.batch_sin(a)
 print(b[10])
-```
-
-内存管理
-
-```lua
-local Ref = java.import("com.luajava.compat.Ref")
-local big = java.newArray("byte", 1024*1024)
-local id = Ref.holdWeak(big)
-print(Ref.getMemoryUsagePercent())
-Ref.release(id)
-Ref.gc()
 ```
 
 ---
