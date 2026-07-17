@@ -22,7 +22,7 @@ SOFTWARE.
 
 -------------------------------------------------------------------------------
 
-This project includes Lua 5.4.8 and JLine 3.
+This project includes Lua 5.4.8 and JLine 3 , Sleef.
 
 Lua 5.4.8
 Copyright (C) 1994-2023 Lua.org, PUC-Rio.
@@ -40,6 +40,8 @@ Licensed under the Eclipse Public License 1.0 (EPL-1.0).
 See https://junit.org/junit5/ for full license text.
 
 -------------------------------------------------------------------------------
+
+Sleef
 Boost Software License - Version 1.0 - August 17th, 2003
 
 Permission is hereby granted, free of charge, to any person or organization
