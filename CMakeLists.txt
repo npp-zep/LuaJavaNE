@@ -45,8 +45,11 @@ add_library(lua STATIC ${LUA_CORE_SRCS})
 target_include_directories(lua PUBLIC "${LUA_DIR}")
 set_target_properties(lua PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# ===== 关键修改：启用动态库加载 =====
+target_compile_definitions(lua PRIVATE LUA_USE_DLOPEN)
+
 if(UNIX)
-    target_link_libraries(lua PUBLIC m)
+    target_link_libraries(lua PUBLIC m dl)
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -88,6 +91,7 @@ add_library(luajava SHARED
     "${NATIVE_DIR}/lualib/lualib_async.c"
     "${NATIVE_DIR}/lualib/lualib_clac.c"
     "${NATIVE_DIR}/lualib/lualib_gc.c"
+    "${NATIVE_DIR}/lualib/lualib_utils.c"
     "${NATIVE_DIR}/lualib/lua_custom_init.c"
 )
 
@@ -105,7 +109,7 @@ if(USE_SLEEF)
     target_compile_definitions(luajava PRIVATE CLAC_USE_SLEEF)
 endif()
 
-target_link_libraries(luajava PRIVATE lua ${JNI_LIBRARIES})
+target_link_libraries(luajava PRIVATE lua ${JNI_LIBRARIES} dl)
 
 if(USE_OPENMP)
     target_compile_definitions(luajava PRIVATE CLAC_USE_OPENMP)

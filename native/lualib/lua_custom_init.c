@@ -6,11 +6,13 @@
 extern int luaopen_java(lua_State* L);
 extern int luaopen_clac(lua_State* L);
 extern int luaopen_gc(lua_State* L);
+extern int luaopen_utils(lua_State* L);  
 
 static const luaL_Reg custom_libs[] = {
     {"java", luaopen_java},
     {"clac", luaopen_clac},
     {"gc",   luaopen_gc},
+    {"utils", luaopen_utils}, 
     {NULL, NULL}
 };
 
