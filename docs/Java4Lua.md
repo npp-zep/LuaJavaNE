@@ -111,6 +111,8 @@ print(Math.PI)   -- 输出 3.1415926535898
 
 同样可赋值（如果字段不是 final）。
 
+> **注意**：对象访问时**方法优先于字段**——当对象同时存在同名方法和字段时，`对象:名字` 会调用方法而非读取字段（如 `BigDecimal.scale()` 调用的是方法，而不是读取其私有 int 字段）。仅当不存在同名方法时才按字段读取。
+
 ---
 
 ## 7. 创建 Java 数组
@@ -144,27 +146,34 @@ strArr[2] = "b"
 
 ## 8. 动态代理（Lua 表实现 Java 接口）
 
-使用 `java.createProxy({接口名列表}, handler表)` 创建 Java 代理对象，其中 `handler` 表需包含对应接口方法的 Lua 函数。
+使用 `java.createProxy({接口名列表}, handler表)` 创建 Java 代理对象，其中 `handler` 表需包含对应接口方法的 Lua 函数。接口方法被调用时派发到 handler 表中**同名（区分大小写）**的 Lua 函数，第一个参数 `self` 为 handler 表。
 
 ```lua
-local Runnable = java.import("java.lang.Runnable")
+local ran = false
+local proxy = java.createProxy({"java.lang.Runnable"}, {
+    run = function(self) ran = true end
+})
+
+-- 在后台线程中运行
 local Thread = java.import("java.lang.Thread")
-
--- 创建一个 Runnable 代理
-local handler = {
-    run = function(self)
-        print("Hello from Lua thread!")
-    end
-}
-local proxy = java.createProxy({"java.lang.Runnable"}, handler)
-
--- 在新线程中运行
 local t = Thread:new(proxy)
 t:start()
-t:join()
+
+-- 注意：不要在持有 Lua 锁期间调用 t:join()——主线程持锁等待，
+-- 而后台线程的 run() 回调也需要这把锁，会互相等待导致死锁。
+-- 等待期用 java.yield 短暂释放 Lua 锁，子线程才有机会执行回调。
+local waited = 0
+while not ran and waited < 3000 do
+    java.yield(10)
+    waited = waited + 10
+end
 ```
 
-**方法签名**：代理的方法名必须与接口方法名完全一致（区分大小写）。返回值会被自动转换回 Lua 类型。
+**类型转换**：
+- 参数：`String`、整数、浮点、布尔转换为对应的 Lua 值；其他 Java 对象参数目前以 `nil` 传入。
+- 返回值：`String`、整数、浮点、布尔、`null` 转换为对应的 Lua 值；其他对象包装为 userdata（可继续调用其方法）。
+
+完整可运行示例见 `examples/proxy.lua`。
 
 ---
 
@@ -257,6 +266,36 @@ if err and string.sub(err, 1, 2) == "E:" then
 end
 ```
 
+### 9.8 回调消费结果（java.onComplete）
+
+除轮询外，也可注册完成回调，任务完成时由后台线程自动调用，无需轮询：
+
+```lua
+local id = java.promise()
+java.runAsync(id, "java.lang.Integer", "parseInt", "42")
+java.onComplete(id, function(err, result)
+    if err then
+        print("失败:", err)      -- err 为错误信息字符串
+    else
+        print("结果:", result)   -- 42
+    end
+end)
+```
+
+- 回调签名：`callback(err, result...)`，`err == nil` 表示成功，`result...` 与 `checkPromise` 返回值一致。
+- 若任务已完成再注册，会立即触发。
+- 回调在后台工作线程执行，应**快速返回**；耗时的重活请再次 `runAsync` 提交。
+
+### 9.9 释放锁等待（java.yield）
+
+主线程轮询等待异步结果或代理回调时，`java.yield(ms)` 会短暂释放 Lua 锁（默认 10ms）再重新获取，让后台工作线程有机会执行回调，避免"主线程持锁等待 → 工作线程无法执行 Lua"的死锁（详见第 8 节）。
+
+```lua
+while not done do
+    java.yield(10)          -- 默认 10ms
+end
+```
+
 ---
 
 ## 10. 跨 Lua 状态的全局存储（java.store / java.fetch）
@@ -305,7 +344,7 @@ java.deleteStore("myKey")
 
 1. **线程安全**：异步任务在独立线程池执行，但 Lua 状态本身不是线程安全的。请勿在多个线程中同时操作同一个 `LuaRuntime` 实例（除非外部加锁）。
 
-2. **方法重载**：LuaJavaNE 会尝试根据参数类型和数量匹配最合适的重载版本，若匹配失败会抛出 Lua 错误。
+2. **方法重载**：LuaJavaNE 会根据参数类型和数量匹配最合适的重载版本；常规签名查找失败时会自动回退到 Java 反射调用（支持任意返回类型，如 `java.math.BigInteger`/`BigDecimal` 的方法），仍无法匹配才抛出 Lua 错误。
 
 3. **资源释放**：Java 对象由 JVM GC 管理，但 Lua userdata 会持有 JNI 全局引用，应避免大量临时对象造成内存压力。必要时可显式调用 `java.import("java.lang.System"):gc()` 建议 GC。
 

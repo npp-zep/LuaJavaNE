@@ -636,3 +636,6 @@ print("清理后引用数:", gc.count())
 - [LuaJavaNE GitHub](https://github.com/npp-zep/LuaJavaNE)
 - [Lua 5.4 参考手册](https://www.lua.org/manual/5.4/)
 - [Sleef SIMD 库](https://sleef.org/)
+
+---
+*本文档对应 LuaJavaNE 版本 2.2.4。*

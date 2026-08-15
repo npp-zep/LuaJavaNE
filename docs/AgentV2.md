@@ -125,6 +125,36 @@ end)
 
 > **注意**：回调在后台工作线程（LuaAgent 线程池）上执行，应**快速返回**；耗时的重活在回调里应再通过 `runAsync` 提交新任务，不要在回调中阻塞线程池。
 
+**设计说明**：
+- 取名 `onComplete` 而非 `then`：`then` 是 Lua 保留关键字，无法直接作为字段名访问（`java.then(...)` 会报语法错误）。
+- 三种消费原语并存，按需选用：
+
+| 原语 | 机制 | 适用场景 |
+|---|---|---|
+| `java.checkPromise(id)` | 轮询 | 主流程 / REPL 循环检查，最直观 |
+| `java.onComplete(id, cb)` | 回调 | 事件驱动、不想占用主线程 |
+| `java.await(id)` | 协程 `lua_yield`/`lua_resume` | 协程内顺序等待（`PromiseTest` 依赖，保留） |
+
+- 回调与轮询**结果语义完全一致**（共享同一套结果解析函数），两种方式可放心混用或切换。
+- 同一 id **混用** `onComplete` 与 `checkPromise` 是允许的：两者读到的是同一份结果，但**清理只发生一次**——回调触发后或轮询消费后该 Promise 即从注册表移除，后续访问返回 `false, nil`。建议一个 id 只用一种方式。
+- 回调在后台工作线程上运行，内部经 `lua_mutex`（递归锁）串行访问 Lua 状态；锁序固定为"先释放 `promise_mutex`，再获取 `lua_mutex`"，与主线程路径无反向持锁，不会死锁。回调内再调用 Java（含 `runAsync`）可重入，安全。
+
+### `java.yield(ms)`
+短暂释放 Lua 互斥锁（`lua_mutex`），等待约 `ms` 毫秒（默认 10）后重新获取。
+
+**用途**：主线程在轮询等待期间让出 Lua 锁，使后台工作线程（LuaAgent 线程池）有机会执行已注册的 `onComplete` 回调或代理回调，避免"主线程持锁等待 → 工作线程无法执行 Lua 回调"的死锁。注意这与 `Thread.sleep` 不同——`Thread.sleep` 不释放 Lua 锁。
+
+**示例**：
+```lua
+local done = false
+java.onComplete(id, function(err, result)
+    done = true
+end)
+while not done do
+    java.yield(10)   -- 释放 Lua 锁，让回调得以执行
+end
+```
+
 ### `java.getObject(id)`
 从对象池中获取一个 Java 对象（userdata），该对象通常由异步任务返回（如构造器返回的对象）。
 
@@ -300,7 +330,7 @@ A: 可在任务中打印日志（通过 `System.out.println`），或使用 `jav
 
 ## 版本历史
 
-- **v2.2.4**：新增回调式消费 API `java.onComplete(id, callback)`，与 `checkPromise` 轮询并存，用户按需二选一；统一 PromiseEntry 生命周期清理。
+- **v2.2.4**：新增回调式消费 API `java.onComplete(id, callback)`，与 `checkPromise` 轮询并存，用户按需二选一；新增 `java.yield(ms)` 等待原语（释放 Lua 锁）；统一 PromiseEntry 生命周期清理。
 - **v2.0**（当前）：初始版本，支持静态/实例异步调用、对象池、多返回值。
 - **未来计划**：支持任务取消、超时控制、自定义线程池配置。
 
