@@ -330,7 +330,7 @@ A: 可在任务中打印日志（通过 `System.out.println`），或使用 `jav
 
 ## 版本历史
 
-- **v2.2.4**：新增回调式消费 API `java.onComplete(id, callback)`，与 `checkPromise` 轮询并存，用户按需二选一；新增 `java.yield(ms)` 等待原语（释放 Lua 锁）；统一 PromiseEntry 生命周期清理。
+- **v2.2.5**：新增回调式消费 API `java.onComplete(id, callback)`，与 `checkPromise` 轮询并存，用户按需二选一；新增 `java.yield(ms)` 等待原语（释放 Lua 锁）；统一 PromiseEntry 生命周期清理。
 - **v2.0**（当前）：初始版本，支持静态/实例异步调用、对象池、多返回值。
 - **未来计划**：支持任务取消、超时控制、自定义线程池配置。
 
@@ -346,4 +346,4 @@ A: 可在任务中打印日志（通过 `System.out.println`），或使用 `jav
 
 ---
 
-*文档最后更新：v2.2.4*
+*文档最后更新：v2.2.5*

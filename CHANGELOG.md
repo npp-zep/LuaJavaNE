@@ -1,3 +1,24 @@
+## [2.2.5] - 2026-08-15
+### Added
+- **Callback-based async consumption**: `java.onComplete(id, callback)` alongside `checkPromise` polling — user picks either style
+  - Callback signature `callback(err, result...)`, `err == nil` means success
+  - Immediate dispatch when the task already finished (handles race between completion and registration)
+  - Auto-cleanup of the PromiseEntry and callback reference after dispatch
+- **`java.yield(ms)` wait primitive**: briefly releases `lua_mutex` so background worker threads can run registered callbacks during wait loops (unlike `Thread.sleep`, which does not release the lock)
+- **Reflective method invocation fallback**: when regular signature matching fails, falls back to Java reflection (`Method.invoke`) — supports methods returning arbitrary object types (e.g. `java.math.BigInteger`/`BigDecimal`), static method detection, and overload try-and-continue
+- **Examples**: `examples/callback.lua` (callback API), `examples/proxy.lua` (dynamic proxy with `java.yield` wait)
+
+### Changed
+- Object indexing now **prefers methods over fields** — e.g. `BigDecimal.scale()` calls the method instead of reading the private `int` field
+- Async methods now reliably support **multiple arguments** (previously documented as single-arg)
+- Docs refresh: README callback API + complete `java.*` API table; callback docs merged into `docs/AgentV2.md` (removed `docs/callback.md`)
+
+### Fixed
+- JVM crash (SIGSEGV in G1 GC) in callback examples caused by the main thread holding `lua_mutex` while background callbacks were dispatched — resolved with `java.yield`
+- Method-not-found for methods returning concrete object types (e.g. `java.math` core methods)
+- Deadlock-prone `Thread.join()` pattern documented in the proxy example (replaced with `java.yield` wait loop)
+
+
 ## [2.2.4] - 2026-07-17
 ### Added
 - **Java arrays as Lua userdata**: automatic array detection and metadata caching when creating Java object wrappers

@@ -638,4 +638,4 @@ print("清理后引用数:", gc.count())
 - [Sleef SIMD 库](https://sleef.org/)
 
 ---
-*本文档对应 LuaJavaNE 版本 2.2.4。*
+*本文档对应 LuaJavaNE 版本 2.2.5。*
