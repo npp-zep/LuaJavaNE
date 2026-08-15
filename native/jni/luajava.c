@@ -4,6 +4,7 @@
 #include <lua.h>
 extern int luaopen_java(lua_State* L);
 extern void lua_open_custom_libs(lua_State* L);
+extern void java_promise_cleanup_state(lua_State* L);
 #include "com_luajava_LuaRuntime.h"
 #include "com_luajava_LuaFunctionObj.h"
 #include "com_luajava_LuaInvocationHandler.h"
@@ -185,7 +186,11 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1doString(JNIEnv* env, jobje
 JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1close(JNIEnv* env, jobject obj, jlong Lptr) {
     LUA_LOCK();
     lua_State* L = (lua_State*)(uintptr_t)Lptr;
-    if (L) lua_close(L);
+    if (L) {
+        // 先清理该状态在 Promise 注册表中的回调引用，再关闭状态
+        java_promise_cleanup_state(L);
+        lua_close(L);
+    }
     LUA_UNLOCK();
 }
 

@@ -22,7 +22,9 @@ Promise 是一个**任务凭证**，由 `java.promise()` 创建，返回一个�
 1. 创建 Promise ID。
 2. 调用 `java.runAsync` 或 `java.runAsyncObj` 提交任务，传入 ID、目标类/对象、方法名和参数。
 3. 任务在线程池中执行，完成后结果存储在 Promise 中。
-4. 在 Lua 中轮询 `java.checkPromise(id)`，若完成则获取返回值，并自动清理该 Promise。
+4. 消费结果（二选一）：
+   - **轮询**：`java.checkPromise(id)`，若完成则获取返回值，并自动清理该 Promise。
+   - **回调**：`java.onComplete(id, callback)`，任务完成时后台线程自动调用回调，并自动清理该 Promise。
 
 ### 线程池
 - 底层由 `LuaAgent` 管理，基于 `ThreadPoolExecutor`。
@@ -92,6 +94,36 @@ else
     print("Still running...")
 end
 ```
+
+### `java.onComplete(id, callback)`
+为 Promise 注册**完成回调**，任务完成时由后台工作线程自动调用，无需轮询。
+
+**参数**：
+- `id` (integer)：Promise ID。
+- `callback` (function)：完成回调，签名 `callback(err, result...)`。
+  - `err == nil`：任务成功，`result...` 与 `checkPromise` 返回的结果值**完全一致**（含多返回值、`O:` 对象 id、`nil`）。
+  - `err == string`：任务失败，内容即 `E:` 前缀后的错误信息（如 `"java.lang.ClassNotFoundException: ..."`）。
+
+**行为**：
+- 若任务**尚未完成**：注册回调，任务完成后自动触发一次。
+- 若任务**已完成**（先完成再注册）：立即触发。
+- 同一 id 重复注册回调：后者覆盖前者。
+- 回调触发后，该 Promise 会被自动清理（与 `checkPromise` 消费后的清理一致）。
+
+**示例**：
+```lua
+local id = java.promise()
+java.runAsync(id, "java.lang.Integer", "parseInt", "42")
+java.onComplete(id, function(err, result)
+    if err then
+        print("失败:", err)
+    else
+        print("结果:", result)   -- 42
+    end
+end)
+```
+
+> **注意**：回调在后台工作线程（LuaAgent 线程池）上执行，应**快速返回**；耗时的重活在回调里应再通过 `runAsync` 提交新任务，不要在回调中阻塞线程池。
 
 ### `java.getObject(id)`
 从对象池中获取一个 Java 对象（userdata），该对象通常由异步任务返回（如构造器返回的对象）。
@@ -268,6 +300,7 @@ A: 可在任务中打印日志（通过 `System.out.println`），或使用 `jav
 
 ## 版本历史
 
+- **v2.2.4**：新增回调式消费 API `java.onComplete(id, callback)`，与 `checkPromise` 轮询并存，用户按需二选一；统一 PromiseEntry 生命周期清理。
 - **v2.0**（当前）：初始版本，支持静态/实例异步调用、对象池、多返回值。
 - **未来计划**：支持任务取消、超时控制、自定义线程池配置。
 

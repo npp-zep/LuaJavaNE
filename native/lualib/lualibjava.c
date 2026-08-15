@@ -15,6 +15,7 @@ extern int java_runAsync(lua_State* L);
 extern int java_getObject(lua_State* L);
 extern int java_runAsyncObj(lua_State* L);
 extern int java_checkPromise(lua_State* L);
+extern void dispatch_callback(lua_State* owner, int cbRef, const char* result);
 
 
 
@@ -1067,28 +1068,95 @@ static void create_metatables(lua_State* L) {
 int promise_next_id = 1;
 PromiseEntry* promise_registry = NULL;
 
+// 查找条目（调用方须持有 promise_mutex）
+PromiseEntry* promise_find(int id) {
+    PromiseEntry* e = promise_registry;
+    while (e) { if (e->id == id) return e; e = e->next; }
+    return NULL;
+}
+
+// 从链表摘除并释放条目（调用方须持有 promise_mutex）
+void promise_remove(PromiseEntry* target) {
+    PromiseEntry** pp = &promise_registry;
+    while (*pp) {
+        if (*pp == target) {
+            *pp = target->next;
+            if (target->result) free(target->result);
+            free(target);
+            return;
+        }
+        pp = &(*pp)->next;
+    }
+}
 
 static int java_promise(lua_State* L) {
-
+    pthread_mutex_lock(&promise_mutex);
     PromiseEntry* entry = (PromiseEntry*)malloc(sizeof(PromiseEntry));
     entry->id = promise_next_id++;
     entry->co = NULL;
+    entry->owner = L;
+    entry->callbackRef = LUA_NOREF;
     entry->done = 0;
     entry->result = NULL;
     entry->next = promise_registry;
     promise_registry = entry;
+    pthread_mutex_unlock(&promise_mutex);
     lua_pushinteger(L, entry->id);
     return 1;
 }
 
 static int java_await(lua_State* L) {
     int id = (int)luaL_checkinteger(L, 1);
-    PromiseEntry* entry = promise_registry;
-    while (entry) { if (entry->id == id) break; entry = entry->next; }
-    if (!entry) return luaL_error(L, "promise not found: %d", id);
+    pthread_mutex_lock(&promise_mutex);
+    PromiseEntry* entry = promise_find(id);
+    if (!entry) {
+        pthread_mutex_unlock(&promise_mutex);
+        return luaL_error(L, "promise not found: %d", id);
+    }
     entry->co = L;
+    pthread_mutex_unlock(&promise_mutex);
     return lua_yield(L, 0);
 }
+
+// ========== 回调注册：java.onComplete(id, callback) ==========
+// 回调签名：callback(err, result...)
+//   err == nil    ：成功，result... 与 checkPromise 返回值语义一致
+//   err == string ：失败，内容为 E: 后的错误信息
+// 若任务已完成则立即派发（处理"先完成再注册回调"的竞态）。
+static int java_onComplete(lua_State* L) {
+    int id = (int)luaL_checkinteger(L, 1);
+    luaL_checktype(L, 2, LUA_TFUNCTION);
+
+    pthread_mutex_lock(&promise_mutex);
+    PromiseEntry* e = promise_find(id);
+    if (!e) {
+        pthread_mutex_unlock(&promise_mutex);
+        return luaL_error(L, "promise not found: %d", id);
+    }
+    // 同一 promise 重复 then：释放旧回调引用（后者覆盖）
+    if (e->callbackRef != LUA_NOREF) luaL_unref(L, LUA_REGISTRYINDEX, e->callbackRef);
+    e->owner = L;
+    lua_pushvalue(L, 2);
+    e->callbackRef = luaL_ref(L, LUA_REGISTRYINDEX);
+
+    int alreadyDone = e->done;
+    lua_State* owner = e->owner;
+    int cbRef = e->callbackRef;
+    char* result = NULL;
+    if (alreadyDone) {
+        result = e->result ? strdup(e->result) : NULL;
+        e->callbackRef = LUA_NOREF;
+        promise_remove(e);
+    }
+    pthread_mutex_unlock(&promise_mutex);
+
+    if (alreadyDone) {
+        dispatch_callback(owner, cbRef, result);
+        if (result) free(result);
+    }
+    return 0;
+}
+
 static int java_agent_exec(lua_State* L) {
     int funcRef = (int)luaL_checkinteger(L, 1);
     lua_rawgeti(L, LUA_REGISTRYINDEX, funcRef);
@@ -1099,52 +1167,62 @@ static int java_agent_exec(lua_State* L) {
 static int java_complete(lua_State* L) {
     int id = (int)luaL_checkinteger(L, 1);
     int nargs = lua_gettop(L) - 1;
-    PromiseEntry* entry = promise_registry;
-    while (entry) { if (entry->id == id) break; entry = entry->next; }
-    if (!entry) return luaL_error(L, "promise not found: %d", id);
-    if (entry->done) return 0;
-    if (entry->co) {
+
+    pthread_mutex_lock(&promise_mutex);
+    PromiseEntry* entry = promise_find(id);
+    if (!entry) {
+        pthread_mutex_unlock(&promise_mutex);
+        return luaL_error(L, "promise not found: %d", id);
+    }
+    if (entry->done) {
+        pthread_mutex_unlock(&promise_mutex);
+        return 0;
+    }
+
+    lua_State* co = entry->co;
+    // 写结果（'S:' 前缀 + arg2 字符串，兼容 checkPromise 读取）
+    if (nargs > 0) {
+        size_t len;
+        const char* s = lua_tolstring(L, 2, &len);
+        if (s) {
+            if (entry->result) free(entry->result);
+            entry->result = malloc(len + 3);
+            entry->result[0] = 'S';
+            entry->result[1] = ':';
+            memcpy(entry->result + 2, s, len);
+            entry->result[len + 2] = '\0';
+        }
+    }
+    entry->done = 1;
+
+    int cbRef = entry->callbackRef;
+    lua_State* owner = entry->owner;
+    char* rcopy = NULL;
+    if (cbRef != LUA_NOREF) {
+        rcopy = entry->result ? strdup(entry->result) : NULL;
+        entry->callbackRef = LUA_NOREF;
+        promise_remove(entry);
+    }
+    pthread_mutex_unlock(&promise_mutex);
+
+    // 恢复挂起的协程（不持 promise_mutex，避免协程内再调 java API 死锁）
+    if (co) {
         for (int i = 2; i <= nargs + 1; i++) {
             lua_pushvalue(L, i);
-            lua_xmove(L, entry->co, 1);
+            lua_xmove(L, co, 1);
         }
         int nres;
-        lua_resume(entry->co, L, nargs, &nres);
-    }
-    // 设置 result，兼容 checkPromise 读取
-    if (nargs > 0) {
-        const char* s = lua_tostring(L, 2);
-        if (s) {
-            if (entry->result) free(entry->result);
-            entry->result = strdup(s);
-        }
-    }
-    if (nargs > 0) {
-        size_t len;
-        const char* s = lua_tolstring(L, 2, &len);
-        if (s) {
-            if (entry->result) free(entry->result);
-            entry->result = malloc(len + 3);
-            entry->result[0] = 'S';
-            entry->result[1] = ':';
-            memcpy(entry->result + 2, s, len);
-            entry->result[len + 2] = '\0';
-        }
-    }
-    if (nargs > 0) {
-        size_t len;
-        const char* s = lua_tolstring(L, 2, &len);
-        if (s) {
-            if (entry->result) free(entry->result);
-            entry->result = malloc(len + 3);
-            entry->result[0] = 'S';
-            entry->result[1] = ':';
-            memcpy(entry->result + 2, s, len);
-            entry->result[len + 2] = '\0';
+        if (lua_resume(co, L, nargs, &nres) != LUA_OK && nres != LUA_YIELD) {
+            const char* msg = lua_tostring(co, -1);
+            fprintf(stderr, "java.complete resume error: %s\n", msg ? msg : "unknown");
+            lua_pop(co, 1);
         }
     }
 
-    entry->done = 1;
+    if (rcopy) {
+        dispatch_callback(owner, cbRef, rcopy);
+        free(rcopy);
+    }
     return 0;
 }
 
@@ -1351,6 +1429,7 @@ static const luaL_Reg javalib[] = {
     {"toString",    java_toString},
     {"promise",     java_promise},
     {"await",       java_await},
+    {"onComplete",  java_onComplete},
     {"createProxy", java_createProxy},
     {"complete",    java_complete},
     {"newArray",    java_newArray},

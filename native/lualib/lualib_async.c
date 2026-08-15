@@ -12,26 +12,131 @@
 extern JavaVM* g_jvm;
 extern int new_java_object_ud(lua_State* L, jobject obj);
 
-static pthread_mutex_t promise_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t promise_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// ========== 共享解析器：把序列化结果串按前缀压入栈 ==========
+// 返回压入栈的值的个数；供 checkPromise 与回调派发共用，保证结果语义一致
+static int push_parsed_result(lua_State* L, const char* r) {
+    int pushed = 0;
+    if (!r || !r[0]) return pushed;
+    switch (r[0]) {
+        case 'M': {
+            int count = atoi(r + 1);
+            char* p = strchr(r, '|');
+            if (!p) { lua_pushnil(L); pushed = 1; break; }
+            p++;
+            for (int i = 0; i < count && p && *p; i++) {
+                char type = *p;
+                char* val = p + 2;
+                char* end = strchr(p, '|');
+                size_t len = end ? (size_t)(end - val) : strlen(val);
+                switch (type) {
+                    case 'S': lua_pushlstring(L, val, len); break;
+                    case 'I': { char buf[32]; memcpy(buf, val, len); buf[len]='\0'; lua_pushinteger(L, atoll(buf)); break; }
+                    case 'N': { char buf[64]; memcpy(buf, val, len); buf[len]='\0'; lua_pushnumber(L, atof(buf)); break; }
+                    case 'B': lua_pushboolean(L, (len == 4 && memcmp(val, "true", 4)==0) || (len == 1 && *val == '1')); break;
+                    case 'X': lua_pushnil(L); break;
+                    default: lua_pushnil(L);
+                }
+                pushed++;
+                p = end;
+                if (p) p++;
+            }
+            break;
+        }
+        case 'S': lua_pushstring(L, r + 2); pushed = 1; break;
+        case 'I': lua_pushinteger(L, atoll(r + 2)); pushed = 1; break;
+        case 'N': lua_pushnumber(L, atof(r + 2)); pushed = 1; break;
+        case 'B': lua_pushboolean(L, (r[2] == 't' || r[2] == '1')); pushed = 1; break;
+        case 'O': lua_pushinteger(L, atoi(r + 2)); pushed = 1; break;
+        case 'E': lua_pushstring(L, r + 2); pushed = 1; break;
+        default:  lua_pushnil(L); pushed = 1; break;
+    }
+    return pushed;
+}
+
+// ========== 回调派发（在工作线程上执行） ==========
+// 锁序：只持有 lua_mutex（递归锁），不再持有 promise_mutex，避免与主线程死锁。
+// 调用方必须先拷贝出 cbRef/owner/result 并释放 promise_mutex。
+void dispatch_callback(lua_State* owner, int cbRef, const char* result) {
+    if (cbRef == LUA_NOREF || !owner) return;
+    pthread_mutex_lock(&lua_mutex);
+    int base = lua_gettop(owner);   // 记录进入时的栈底，防止把调用方遗留的栈值误当参数
+    lua_rawgeti(owner, LUA_REGISTRYINDEX, cbRef);
+    if (lua_isfunction(owner, -1)) {
+        // 参数约定：callback(err, result...)；err 为 E: 错误串，成功时为 nil
+        if (result && result[0] == 'E') {
+            lua_pushstring(owner, result + 2);
+        } else {
+            lua_pushnil(owner);
+            if (result && result[0]) push_parsed_result(owner, result);
+            else lua_pushnil(owner);
+        }
+        int nargs = lua_gettop(owner) - (base + 1);   // 函数之上的参数个数
+        if (lua_pcall(owner, nargs, 0, 0) != LUA_OK) {
+            const char* msg = lua_tostring(owner, -1);
+            fprintf(stderr, "java.onComplete callback error: %s\n", msg ? msg : "unknown");
+            lua_pop(owner, 1);
+        }
+        luaL_unref(owner, LUA_REGISTRYINDEX, cbRef);
+    } else {
+        lua_pop(owner, 1);
+    }
+    pthread_mutex_unlock(&lua_mutex);
+}
 
 JNIEXPORT void JNICALL Java_com_luajava_LuaAgent_complete
   (JNIEnv* env, jclass cls, jint pid, jstring result) {
     const char* s = (*env)->GetStringUTFChars(env, result, NULL);
-    
+
+    lua_State* owner = NULL;
+    int cbRef = LUA_NOREF;
+    char* copy = NULL;
+
     pthread_mutex_lock(&promise_mutex);
-    PromiseEntry* e = promise_registry;
-    while (e) {
-        if (e->id == pid) {
-            if (e->result) free(e->result);
-            e->result = strdup(s);
-            e->done = 1;
-            break;
+    PromiseEntry* e = promise_find(pid);
+    if (e) {
+        if (e->result) free(e->result);
+        e->result = strdup(s);
+        e->done = 1;
+        if (e->callbackRef != LUA_NOREF) {
+            owner = e->owner;
+            cbRef = e->callbackRef;
+            copy = strdup(s);
+            e->callbackRef = LUA_NOREF;
+            promise_remove(e);
         }
-        e = e->next;
     }
     pthread_mutex_unlock(&promise_mutex);
-    
+
+    // 先释放 promise_mutex 再进 Lua，锁序：promise_mutex → 释放 → lua_mutex
+    if (copy) {
+        dispatch_callback(owner, cbRef, copy);
+        free(copy);
+    }
     (*env)->ReleaseStringUTFChars(env, result, s);
+}
+
+// 状态关闭时清理该状态注册的回调引用，避免悬空
+void java_promise_cleanup_state(lua_State* L) {
+    if (!L) return;
+    pthread_mutex_lock(&promise_mutex);
+    PromiseEntry** pp = &promise_registry;
+    while (*pp) {
+        PromiseEntry* e = *pp;
+        if (e->owner == L) {
+            if (e->callbackRef != LUA_NOREF) {
+                luaL_unref(L, LUA_REGISTRYINDEX, e->callbackRef);
+                e->callbackRef = LUA_NOREF;
+            }
+            *pp = e->next;
+            if (e->result) free(e->result);
+            free(e);
+        } else {
+            pp = &e->next;
+        }
+    }
+    pthread_mutex_unlock(&promise_mutex);
 }
 
 static char get_type_hint(lua_State* L, int idx) {
@@ -135,58 +240,29 @@ int java_runAsyncObj(lua_State* L) {
 
 int java_checkPromise(lua_State* L) {
     int id = (int)luaL_checkinteger(L, 1);
-    int initial = lua_gettop(L);
     pthread_mutex_lock(&promise_mutex);
-    PromiseEntry* e = promise_registry;
-    while (e) {
-        if (e->id == id) {
-            lua_pushboolean(L, e->done);
-            if (e->done && e->result) {
-                char* r = e->result;
-                switch (r[0]) {
-                    case 'M': {
-                        int count = atoi(r + 1);
-                        char* p = strchr(r, '|');
-                        if (!p) { lua_pushnil(L); break; }
-                        p++;
-                        for (int i = 0; i < count && p && *p; i++) {
-                            char type = *p;
-                            char* val = p + 2;
-                            char* end = strchr(p, '|');
-                            size_t len = end ? (size_t)(end - val) : strlen(val);
-                            switch (type) {
-                                case 'S': lua_pushlstring(L, val, len); break;
-                                case 'I': { char buf[32]; memcpy(buf, val, len); buf[len]='\0'; lua_pushinteger(L, atoll(buf)); break; }
-                                case 'N': { char buf[64]; memcpy(buf, val, len); buf[len]='\0'; lua_pushnumber(L, atof(buf)); break; }
-                                case 'B': lua_pushboolean(L, (len == 4 && memcmp(val, "true", 4)==0) || (len == 1 && *val == '1')); break;
-                                case 'X': lua_pushnil(L); break;
-                                default: lua_pushnil(L);
-                            }
-                            p = end;
-                            if (p) p++;
-                        }
-                        break;
-                    }
-                    case 'S': lua_pushstring(L, r + 2); break;
-                    case 'I': lua_pushinteger(L, atoll(r + 2)); break;
-                    case 'N': lua_pushnumber(L, atof(r + 2)); break;
-                    case 'B': lua_pushboolean(L, (r[2] == 't' || r[2] == '1')); break;
-                    case 'O': lua_pushinteger(L, atoi(r + 2)); break;
-                    case 'E': lua_pushstring(L, r + 2); break;
-                    default:  lua_pushnil(L); break;
-                }
-            } else {
-                lua_pushnil(L);
-            }
-            pthread_mutex_unlock(&promise_mutex);
-            return lua_gettop(L) - initial;  // 返回压入栈的总数（含 done）
+    PromiseEntry* e = promise_find(id);
+    if (!e) {
+        pthread_mutex_unlock(&promise_mutex);
+        lua_pushboolean(L, 0);
+        lua_pushnil(L);
+        return 2;
+    }
+    lua_pushboolean(L, e->done);
+    int n = 1;
+    if (e->done && e->result) {
+        int pushed = push_parsed_result(L, e->result);
+        n += pushed;
+        // 已消费 + 无回调 → 清理条目（修复泄漏）
+        if (e->callbackRef == LUA_NOREF) {
+            promise_remove(e);
         }
-        e = e->next;
+    } else {
+        lua_pushnil(L);
+        n++;
     }
     pthread_mutex_unlock(&promise_mutex);
-    lua_pushboolean(L, 0);
-    lua_pushnil(L);
-    return 2;
+    return n;
 }
 
 int java_getObject(lua_State* L) {
