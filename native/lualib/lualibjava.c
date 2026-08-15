@@ -8,6 +8,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <time.h>
+#include <errno.h>
 
 
 extern JNIEnv* getEnv();
@@ -1157,6 +1159,26 @@ static int java_onComplete(lua_State* L) {
     return 0;
 }
 
+// ========== java.yield(ms)：让出 lua_mutex，等待回调派发 ==========
+// 主线程在 _doFile/_doString 期间持有递归锁 lua_mutex，工作线程的
+// dispatch_callback 拿不到锁，回调会一直阻塞到脚本结束。
+// java.yield 短暂释放 lua_mutex 再重新获取，给工作线程执行回调的机会。
+// 等待循环应使用 java.yield 替代 Thread.sleep（后者不释放 lua_mutex）。
+static int java_yield(lua_State* L) {
+    long ms = (long)luaL_optinteger(L, 1, 10);
+    if (ms < 0) ms = 0;
+    pthread_mutex_unlock(&lua_mutex);
+    struct timespec req, rem;
+    req.tv_sec = ms / 1000;
+    req.tv_nsec = (ms % 1000) * 1000000L;
+    while (nanosleep(&req, &rem) == -1) {
+        if (errno == EINTR) { req = rem; continue; }
+        break;
+    }
+    pthread_mutex_lock(&lua_mutex);
+    return 0;
+}
+
 static int java_agent_exec(lua_State* L) {
     int funcRef = (int)luaL_checkinteger(L, 1);
     lua_rawgeti(L, LUA_REGISTRYINDEX, funcRef);
@@ -1430,6 +1452,7 @@ static const luaL_Reg javalib[] = {
     {"promise",     java_promise},
     {"await",       java_await},
     {"onComplete",  java_onComplete},
+    {"yield",       java_yield},
     {"createProxy", java_createProxy},
     {"complete",    java_complete},
     {"newArray",    java_newArray},

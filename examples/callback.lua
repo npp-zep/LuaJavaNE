@@ -4,7 +4,6 @@
 --   轮询：主动反复调用 checkPromise(id) 直到完成
 --   回调：注册 callback，任务完成时由后台线程自动触发，无需主动检查
 local java = require("java")
-local Thread = java.import("java.lang.Thread")
 
 -- 剩余未完成任务数，全部完成后脚本退出
 local pending = 0
@@ -13,12 +12,13 @@ local function on_done()
 end
 
 -- 等待所有回调完成。
--- 注意：回调在后台工作线程执行，主线程需要让出 lua_mutex 才能让回调跑起来，
--- 因此循环里调用 Thread.sleep 主动释放锁（与 async.lua 轮询循环同理）。
+-- 注意：回调由后台工作线程派发，而主线程在 _doFile 期间持有 lua_mutex，
+-- 必须用 java.yield(ms) 短暂释放锁（替代 Thread.sleep，后者不释放锁），
+-- 工作线程才有机会执行回调。全部完成后返回 true。
 local function wait_all(timeout_ms)
     local waited = 0
     while pending > 0 do
-        Thread.sleep(10)
+        java.yield(10)
         waited = waited + 10
         if timeout_ms and waited > timeout_ms then
             print(">>> 等待超时，剩余未完成任务: " .. pending)
@@ -103,7 +103,7 @@ local pid = java.promise()
 java.runAsync(pid, "java.lang.Integer", "parseInt", "100")
 local done, val = false, nil
 while not done do
-    Thread.sleep(10)
+    java.yield(10)
     done, val = java.checkPromise(pid)
 end
 print("  轮询结果: " .. tostring(val))
