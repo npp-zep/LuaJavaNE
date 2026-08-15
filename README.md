@@ -3,7 +3,9 @@
 ![Lua](https://img.shields.io/badge/Lua-5.4.8-blue) ![Java](https://img.shields.io/badge/Java-17%2B-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
 **Lua 5.4.8 + Java 双向互调引擎**。在 Lua 里直接调用任何 Java 类库，在 Java 里执行 Lua 脚本。  
-支持异步多线程、批量高性能数学运算，架构清晰，升级 Lua 仅需替换目录。
+支持异步多线程（轮询/回调双模式）、动态代理、批量高性能数学运算，架构清晰，升级 Lua 仅需替换目录。
+
+> 完整 API 文档见 `docs/` 目录：[APIs.md](docs/APIs.md) · [AgentV2.md](docs/AgentV2.md) · [Java4Lua.md](docs/Java4Lua.md) · [Lua4Java.md](docs/Lua4Java.md)
 
 ---
 
@@ -182,6 +184,32 @@ print(a, b, c)  -- a   b   c
 ~~~lua
 java.runAsync(id, "java.lang.NonExistent", "foo", "")
 -- checkPromise 返回: "java.lang.ClassNotFoundException: java.lang.NonExistent"
+~~~
+
+### 回调式消费（java.onComplete）
+
+除了轮询 `checkPromise`，还可以注册完成回调，任务完成时由后台线程自动调用：
+
+~~~lua
+local id = java.promise()
+java.runAsync(id, "java.lang.Integer", "parseInt", "42")
+java.onComplete(id, function(err, result)
+    if err then print("失败:", err) else print("结果:", result) end  -- 42
+end)
+~~~
+
+- 回调签名：`callback(err, result...)`，`err == nil` 表示成功。
+- 回调在后台工作线程执行，应快速返回；耗时的重活请再次 `runAsync` 提交。
+- 更多异步 API 细节见 `docs/AgentV2.md`。
+
+### 释放锁等待（java.yield）
+
+主线程轮询等待期间，用 `java.yield(ms)` 短暂释放 Lua 锁（默认 10ms），让后台回调/代理线程有机会执行 Lua 代码，避免持锁等待导致死锁（`Thread.sleep` 不释放锁）：
+
+~~~lua
+local done = false
+java.onComplete(id, function(err, result) done = true end)
+while not done do java.yield(10) end
 ~~~
 
 ---
@@ -391,7 +419,15 @@ luaj -h                 # 帮助
 | java.runAsync(id, class, method, args...) | 异步调用静态方法 |
 | java.runAsyncObj(id, obj, method, args...) | 异步调用实例方法 |
 | java.checkPromise(id) | 轮询 Promise 结果 |
+| java.onComplete(id, callback) | 注册完成回调（事件驱动） |
+| java.complete(id, value) | 手动完成一个 Promise |
+| java.await(id) | 协程内阻塞等待 Promise 完成 |
+| java.yield(ms) | 释放 Lua 锁等待，让后台回调执行 |
 | java.getObject(id) | 获取异步构造的对象 |
+| java.toString(obj) | 获取对象的字符串表示 |
+| java.store(key, value) | 跨 Lua 状态存储值 |
+| java.fetch(key) | 读取跨状态存储值 |
+| java.deleteStore(key) | 删除跨状态存储键 |
 
 ### Lua 侧 clac 库
 
@@ -452,8 +488,7 @@ make test   # 运行测试
 ## 已知限制
 
 - compile() 方法在 x86_64 Linux 上可能崩溃（ARM64 正常）
-- 方法重载匹配按返回类型优先级尝试，复杂重载可能不精确
-- 异步方法目前仅支持单个参数（后续扩展）
+- 常规签名匹配失败时自动回退反射调用，支持任意返回类型（如 `java.math`）；极少数高度动态的重载仍可能不精确
 - Termux/Android 环境下线程数上限约 200（受系统限制）
 
 ---
