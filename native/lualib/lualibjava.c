@@ -207,6 +207,312 @@ static int new_method_lookup(lua_State* L, jobject obj, const char* name, int is
     return 1;
 }
 
+// ========== 反射工具：类型映射与装箱 ==========
+
+// Java Class -> JNI 类型字符。约定：String 引用返回 'S'，short 基本类型返回 't'，
+// byte 返回 'B'，char 返回 'C'，其余引用类型返回 'L'。
+static char java_class_to_type_char(JNIEnv* env, jclass cls) {
+    jclass classCls = (*env)->GetObjectClass(env, cls);
+    jmethodID isPrim = (*env)->GetMethodID(env, classCls, "isPrimitive", "()Z");
+    jmethodID getName = (*env)->GetMethodID(env, classCls, "getName", "()Ljava/lang/String;");
+    if ((*env)->CallBooleanMethod(env, cls, isPrim)) {
+        jstring nm = (jstring)(*env)->CallObjectMethod(env, cls, getName);
+        const char* c = (*env)->GetStringUTFChars(env, nm, NULL);
+        char r;
+        switch (c[0]) {
+            case 'v': r = 'V'; break;
+            case 'i': r = 'I'; break;
+            case 'l': r = 'J'; break;
+            case 'd': r = 'D'; break;
+            case 'f': r = 'F'; break;
+            case 'b': r = (c[1] == 'o') ? 'Z' : 'B'; break;
+            case 'c': r = 'C'; break;
+            case 's': r = 't'; break; // short 与 String 区分
+            default:  r = 'O';
+        }
+        (*env)->ReleaseStringUTFChars(env, nm, c);
+        (*env)->DeleteLocalRef(env, nm);
+        (*env)->DeleteLocalRef(env, classCls);
+        return r;
+    }
+    jclass strCls = (*env)->FindClass(env, "java/lang/String");
+    jboolean isStr = (*env)->IsInstanceOf(env, cls, strCls);
+    (*env)->DeleteLocalRef(env, strCls);
+    (*env)->DeleteLocalRef(env, classCls);
+    return isStr ? 'S' : 'L';
+}
+
+// Lua 参数与 Java 参数类型是否兼容
+static int lua_compat_with_class(JNIEnv* env, lua_State* L, int idx, jclass pcls) {
+    char t = java_class_to_type_char(env, pcls);
+    int lt = lua_type(L, idx);
+    switch (t) {
+        case 'I': case 'J': case 'D': case 'F': case 't': case 'B':
+            return lt == LUA_TNUMBER;
+        case 'Z':
+            return lt == LUA_TBOOLEAN;
+        case 'C':
+            return lt == LUA_TSTRING || lt == LUA_TNUMBER;
+        case 'S':
+            return lt == LUA_TSTRING;
+        default: // 'L' 引用类型：userdata / 任意可装箱标量
+            return lt == LUA_TUSERDATA || lt == LUA_TSTRING ||
+                   lt == LUA_TNUMBER || lt == LUA_TBOOLEAN;
+    }
+}
+
+// 按目标参数类型把 Lua 值装箱成 Java 对象，返回局部引用（调用方负责 DeleteLocalRef）
+static jobject box_arg_for_class(JNIEnv* env, lua_State* L, int idx, jclass pcls) {
+    char t = java_class_to_type_char(env, pcls);
+    int lt = lua_type(L, idx);
+    jclass boxCls; jmethodID valueOf;
+    switch (t) {
+        case 'I':
+            boxCls = (*env)->FindClass(env, "java/lang/Integer");
+            valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(I)Ljava/lang/Integer;");
+            return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jint)lua_tointeger(L, idx));
+        case 'J':
+            boxCls = (*env)->FindClass(env, "java/lang/Long");
+            valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(J)Ljava/lang/Long;");
+            return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jlong)lua_tointeger(L, idx));
+        case 'D':
+            boxCls = (*env)->FindClass(env, "java/lang/Double");
+            valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(D)Ljava/lang/Double;");
+            return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jdouble)lua_tonumber(L, idx));
+        case 'F':
+            boxCls = (*env)->FindClass(env, "java/lang/Float");
+            valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(F)Ljava/lang/Float;");
+            return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jfloat)lua_tonumber(L, idx));
+        case 'Z':
+            boxCls = (*env)->FindClass(env, "java/lang/Boolean");
+            valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(Z)Ljava/lang/Boolean;");
+            return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jboolean)lua_toboolean(L, idx));
+        case 'B':
+            boxCls = (*env)->FindClass(env, "java/lang/Byte");
+            valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(B)Ljava/lang/Byte;");
+            return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jbyte)lua_tointeger(L, idx));
+        case 't':
+            boxCls = (*env)->FindClass(env, "java/lang/Short");
+            valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(S)Ljava/lang/Short;");
+            return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jshort)lua_tointeger(L, idx));
+        case 'C': {
+            jchar ch;
+            if (lt == LUA_TSTRING) { size_t len; const char* s = luaL_checklstring(L, idx, &len); ch = (jchar)(unsigned char)(len ? s[0] : 0); }
+            else ch = (jchar)lua_tointeger(L, idx);
+            boxCls = (*env)->FindClass(env, "java/lang/Character");
+            jmethodID ctor = (*env)->GetMethodID(env, boxCls, "<init>", "(C)V");
+            return (*env)->NewObject(env, boxCls, ctor, ch);
+        }
+        case 'S': {
+            size_t len; const char* s = luaL_checklstring(L, idx, &len);
+            return (*env)->NewStringUTF(env, s);
+        }
+        default: { // 'L' 引用类型
+            if (lt == LUA_TUSERDATA) {
+                JavaUserdata* ud = (JavaUserdata*)luaL_testudata(L, idx, JAVAOBJECT_META);
+                if (ud) return (*env)->NewLocalRef(env, ud->obj);
+                JavaArray* arr = (JavaArray*)luaL_testudata(L, idx, JAVAARRAY_META);
+                if (arr) return (*env)->NewLocalRef(env, arr->arrayObj);
+                return NULL;
+            }
+            if (lt == LUA_TSTRING) {
+                size_t len; const char* s = luaL_checklstring(L, idx, &len);
+                return (*env)->NewStringUTF(env, s);
+            }
+            if (lt == LUA_TNUMBER) {
+                if (lua_isinteger(L, idx)) {
+                    lua_Integer n = lua_tointeger(L, idx);
+                    if (n >= -2147483648LL && n <= 2147483647LL) {
+                        boxCls = (*env)->FindClass(env, "java/lang/Integer");
+                        valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(I)Ljava/lang/Integer;");
+                        return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jint)n);
+                    }
+                    boxCls = (*env)->FindClass(env, "java/lang/Long");
+                    valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(J)Ljava/lang/Long;");
+                    return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jlong)n);
+                }
+                boxCls = (*env)->FindClass(env, "java/lang/Double");
+                valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(D)Ljava/lang/Double;");
+                return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jdouble)lua_tonumber(L, idx));
+            }
+            if (lt == LUA_TBOOLEAN) {
+                boxCls = (*env)->FindClass(env, "java/lang/Boolean");
+                valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(Z)Ljava/lang/Boolean;");
+                return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jboolean)lua_toboolean(L, idx));
+            }
+            return NULL;
+        }
+    }
+}
+
+// 把 Java 对象（含装箱对象）转换为 Lua 值压栈，返回压入个数
+static int push_boxed_object(lua_State* L, JNIEnv* env, jobject val) {
+    if (!val) { lua_pushnil(L); return 1; }
+    jclass ocls = (*env)->GetObjectClass(env, val);
+    jclass strCls = (*env)->FindClass(env, "java/lang/String");
+    if ((*env)->IsInstanceOf(env, val, strCls)) {
+        const char* s = (*env)->GetStringUTFChars(env, (jstring)val, NULL);
+        lua_pushstring(L, s);
+        (*env)->ReleaseStringUTFChars(env, (jstring)val, s);
+    } else if ((*env)->IsInstanceOf(env, val, (*env)->FindClass(env, "java/lang/Integer"))) {
+        jmethodID m = (*env)->GetMethodID(env, ocls, "intValue", "()I");
+        lua_pushinteger(L, (*env)->CallIntMethod(env, val, m));
+    } else if ((*env)->IsInstanceOf(env, val, (*env)->FindClass(env, "java/lang/Long"))) {
+        jmethodID m = (*env)->GetMethodID(env, ocls, "longValue", "()J");
+        lua_pushinteger(L, (lua_Integer)(*env)->CallLongMethod(env, val, m));
+    } else if ((*env)->IsInstanceOf(env, val, (*env)->FindClass(env, "java/lang/Double"))) {
+        jmethodID m = (*env)->GetMethodID(env, ocls, "doubleValue", "()D");
+        lua_pushnumber(L, (*env)->CallDoubleMethod(env, val, m));
+    } else if ((*env)->IsInstanceOf(env, val, (*env)->FindClass(env, "java/lang/Float"))) {
+        jmethodID m = (*env)->GetMethodID(env, ocls, "floatValue", "()F");
+        lua_pushnumber(L, (*env)->CallFloatMethod(env, val, m));
+    } else if ((*env)->IsInstanceOf(env, val, (*env)->FindClass(env, "java/lang/Boolean"))) {
+        jmethodID m = (*env)->GetMethodID(env, ocls, "booleanValue", "()Z");
+        lua_pushboolean(L, (*env)->CallBooleanMethod(env, val, m));
+    } else if ((*env)->IsInstanceOf(env, val, (*env)->FindClass(env, "java/lang/Short"))) {
+        jmethodID m = (*env)->GetMethodID(env, ocls, "shortValue", "()S");
+        char buf[16]; snprintf(buf, sizeof(buf), "%d", (int)(*env)->CallShortMethod(env, val, m));
+        lua_pushinteger(L, atoll(buf));
+    } else if ((*env)->IsInstanceOf(env, val, (*env)->FindClass(env, "java/lang/Byte"))) {
+        jmethodID m = (*env)->GetMethodID(env, ocls, "byteValue", "()B");
+        lua_pushinteger(L, (jbyte)(*env)->CallByteMethod(env, val, m));
+    } else if ((*env)->IsInstanceOf(env, val, (*env)->FindClass(env, "java/lang/Character"))) {
+        jmethodID m = (*env)->GetMethodID(env, ocls, "charValue", "()C");
+        jchar ch = (*env)->CallCharMethod(env, val, m);
+        lua_pushlstring(L, (const char*)&ch, 1);
+    } else {
+        new_java_object_ud(L, val);
+    }
+    (*env)->DeleteLocalRef(env, strCls);
+    (*env)->DeleteLocalRef(env, ocls);
+    return 1;
+}
+
+// 反射查找并调用方法（Method.invoke），支持任意返回类型与自动装箱。
+// 逐个尝试匹配的重载；某个重载抛异常时继续尝试下一个。成功返回压入 Lua 栈的个数，
+// 全部失败返回 -1。
+static int invoke_reflective(lua_State* L, JNIEnv* env, jclass cls, jobject obj,
+                             const char* name, int wantStatic,
+                             int startIdx, int nargs) {
+    jclass classCls = (*env)->FindClass(env, "java/lang/Class");
+    jmethodID getMethods = (*env)->GetMethodID(env, classCls, "getMethods", "()[Ljava/lang/reflect/Method;");
+    jobjectArray methods = (jobjectArray)(*env)->CallObjectMethod(env, cls, getMethods);
+    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); (*env)->DeleteLocalRef(env, classCls); return -1; }
+    jsize count = (*env)->GetArrayLength(env, methods);
+
+    jclass methodCls = (*env)->FindClass(env, "java/lang/reflect/Method");
+    jmethodID getName = (*env)->GetMethodID(env, methodCls, "getName", "()Ljava/lang/String;");
+    jmethodID getParams = (*env)->GetMethodID(env, methodCls, "getParameterTypes", "()[Ljava/lang/Class;");
+    jmethodID getMods = (*env)->GetMethodID(env, methodCls, "getModifiers", "()I");
+    jclass modCls = (*env)->FindClass(env, "java/lang/reflect/Modifier");
+    jmethodID isStaticM = (*env)->GetStaticMethodID(env, modCls, "isStatic", "(I)Z");
+
+    jclass objCls = (*env)->FindClass(env, "java/lang/Object");
+    jclass fcl = (*env)->FindClass(env, "java/lang/reflect/Method");
+    jmethodID invoke = (*env)->GetMethodID(env, fcl, "invoke",
+        "(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;");
+
+    int pushed = -1;
+    for (jsize i = 0; i < count; i++) {
+        jobject m = (*env)->GetObjectArrayElement(env, methods, i);
+        jstring mn = (jstring)(*env)->CallObjectMethod(env, m, getName);
+        const char* mnc = (*env)->GetStringUTFChars(env, mn, NULL);
+        int nameMatch = (strcmp(mnc, name) == 0);
+        (*env)->ReleaseStringUTFChars(env, mn, mnc);
+        (*env)->DeleteLocalRef(env, mn);
+        if (!nameMatch) { (*env)->DeleteLocalRef(env, m); continue; }
+
+        jint mods = (*env)->CallIntMethod(env, m, getMods);
+        jboolean mStatic = (*env)->CallStaticBooleanMethod(env, modCls, isStaticM, mods);
+        if ((jboolean)wantStatic != mStatic) { (*env)->DeleteLocalRef(env, m); continue; }
+
+        jobjectArray ptypes = (jobjectArray)(*env)->CallObjectMethod(env, m, getParams);
+        jsize pcount = (*env)->GetArrayLength(env, ptypes);
+        if (pcount != (jsize)nargs) {
+            (*env)->DeleteLocalRef(env, ptypes);
+            (*env)->DeleteLocalRef(env, m);
+            continue;
+        }
+
+        int compat = 1;
+        jclass* pcs = (jclass*)calloc(nargs > 0 ? (size_t)nargs : 1, sizeof(jclass));
+        for (jsize p = 0; p < pcount; p++) {
+            jclass pc = (jclass)(*env)->GetObjectArrayElement(env, ptypes, p);
+            pcs[p] = pc;
+            if (!lua_compat_with_class(env, L, startIdx + (int)p, pc)) { compat = 0; break; }
+        }
+        (*env)->DeleteLocalRef(env, ptypes);
+        if (!compat) {
+            for (jsize p = 0; p < pcount; p++) (*env)->DeleteLocalRef(env, pcs[p]);
+            free(pcs);
+            (*env)->DeleteLocalRef(env, m);
+            continue;
+        }
+
+        // 候选匹配：装箱参数并调用，抛异常则尝试下一个候选
+        jobjectArray argsArr = (*env)->NewObjectArray(env, nargs, objCls, NULL);
+        for (int k = 0; k < nargs; k++) {
+            jobject boxed = box_arg_for_class(env, L, startIdx + k, pcs[k]);
+            if (boxed) (*env)->SetObjectArrayElement(env, argsArr, k, boxed);
+            (*env)->DeleteLocalRef(env, boxed);
+        }
+        for (jsize p = 0; p < pcount; p++) (*env)->DeleteLocalRef(env, pcs[p]);
+        free(pcs);
+
+        jobject result = (*env)->CallObjectMethod(env, m, invoke, wantStatic ? NULL : obj, argsArr);
+        (*env)->DeleteLocalRef(env, argsArr);
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            (*env)->DeleteLocalRef(env, m);
+            continue; // 尝试下一个重载
+        }
+        pushed = push_boxed_object(L, env, result);
+        (*env)->DeleteLocalRef(env, result);
+        (*env)->DeleteLocalRef(env, m);
+        break;
+    }
+
+    (*env)->DeleteLocalRef(env, objCls);
+    (*env)->DeleteLocalRef(env, fcl);
+    (*env)->DeleteLocalRef(env, modCls);
+    (*env)->DeleteLocalRef(env, methodCls);
+    (*env)->DeleteLocalRef(env, classCls);
+    (*env)->DeleteLocalRef(env, methods);
+    return pushed;
+}
+
+// 判断类（含继承链上的 public 方法）是否存在名为 name 的方法。
+// 用于 java_object_index：方法优先于字段，避免字段遮蔽方法（如 BigDecimal.scale）。
+static int class_has_method(JNIEnv* env, jclass cls, const char* name) {
+    jclass classCls = (*env)->FindClass(env, "java/lang/Class");
+    if (!classCls) { (*env)->ExceptionClear(env); return 0; }
+    jmethodID getMethods = (*env)->GetMethodID(env, classCls, "getMethods", "()[Ljava/lang/reflect/Method;");
+    jobjectArray methods = (jobjectArray)(*env)->CallObjectMethod(env, cls, getMethods);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, classCls);
+        return 0;
+    }
+    jsize count = (*env)->GetArrayLength(env, methods);
+    jclass methodCls = (*env)->FindClass(env, "java/lang/reflect/Method");
+    jmethodID getName = (*env)->GetMethodID(env, methodCls, "getName", "()Ljava/lang/String;");
+    int found = 0;
+    for (jsize i = 0; i < count; i++) {
+        jobject m = (*env)->GetObjectArrayElement(env, methods, i);
+        jstring mn = (jstring)(*env)->CallObjectMethod(env, m, getName);
+        const char* mnc = (*env)->GetStringUTFChars(env, mn, NULL);
+        int match = (strcmp(mnc, name) == 0);
+        (*env)->ReleaseStringUTFChars(env, mn, mnc);
+        (*env)->DeleteLocalRef(env, mn);
+        (*env)->DeleteLocalRef(env, m);
+        if (match) { found = 1; break; }
+    }
+    (*env)->DeleteLocalRef(env, methods);
+    (*env)->DeleteLocalRef(env, methodCls);
+    (*env)->DeleteLocalRef(env, classCls);
+    return found;
+}
+
 // ========== 类型推导辅助 ==========
 // ========== 恢复后的 get_possible_arg_types（原始逻辑 + static 修复） ==========
 static void get_possible_arg_types(char c, char** options, int* count) {
@@ -570,8 +876,24 @@ static int method_lookup_call(lua_State* L) {
         }
     }
 
-    // 关键修改：方法未找到时抛出 Lua 错误
+    // 关键修改：常规方法查找失败，尝试反射调用（支持任意返回类型，如 java.math 的方法）
     if (!method) {
+        if (ml->isStatic == 1 || ml->isStatic == -1) {
+            // isStatic==-1 时 cls 可能已被重赋值为 Class 对象的类，静态查找需用原类
+            jclass scls = (ml->isStatic == 1) ? cls : (jclass)ml->obj;
+            int pushed = invoke_reflective(L, env, scls, NULL, ml->methodName, 1, firstArgIdx, nargs);
+            if (pushed != -1) {
+                if (cls && ml->isStatic != 1) (*env)->DeleteLocalRef(env, cls);
+                return pushed;
+            }
+        }
+        if (ml->isStatic == 0 || ml->isStatic == -1) {
+            int pushed = invoke_reflective(L, env, cls, ml->obj, ml->methodName, 0, firstArgIdx, nargs);
+            if (pushed != -1) {
+                if (cls && ml->isStatic != 1) (*env)->DeleteLocalRef(env, cls);
+                return pushed;
+            }
+        }
         if (cls && ml->isStatic != 1) (*env)->DeleteLocalRef(env, cls);
         luaL_error(L, "method not found: %s", ml->methodName);
         return 0;
@@ -792,6 +1114,13 @@ static int java_object_index(lua_State* L) {
     const char* key = luaL_checkstring(L, 2);
     JNIEnv* env = getEnv();
     jclass cls = (*env)->GetObjectClass(env, ud->obj);
+
+    // 方法优先：存在同名方法时返回方法查找，避免字段遮蔽方法（如 BigDecimal.scale()）
+    if (class_has_method(env, cls, key)) {
+        (*env)->DeleteLocalRef(env, cls);
+        return new_method_lookup(L, ud->obj, key, 0);
+    }
+
     jfieldID field = (*env)->GetFieldID(env, cls, key, "Ljava/lang/String;");
     if (field && !(*env)->ExceptionCheck(env)) {
         jstring val = (jstring)(*env)->GetObjectField(env, ud->obj, field);
