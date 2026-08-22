@@ -840,6 +840,24 @@ static int method_lookup_call(lua_State* L) {
         }
     }
 
+    // 处理类方法调用时的 self 参数（Class:method() 冒号语法）。
+    // 类方法查找（isStatic == -1 自动检测，或显式静态）同样需剥离冒号传入的类本身，
+    // 否则类对象会被当成第一个实参参与签名匹配，导致 "method not found"。
+    if ((ml->isStatic == -1 || ml->isStatic == 1) && nargs >= 1 && lua_isuserdata(L, firstArgIdx)) {
+        if (lua_getmetatable(L, firstArgIdx)) {
+            luaL_getmetatable(L, JAVACLASS_META);
+            int isCls = lua_rawequal(L, -1, -2);
+            lua_pop(L, 2);
+            if (isCls) {
+                JavaUserdata* ud = (JavaUserdata*)lua_touserdata(L, firstArgIdx);
+                if (ud && (*env)->IsSameObject(env, ud->obj, ml->obj)) {
+                    firstArgIdx = 3;
+                    nargs = lua_gettop(L) - 2;
+                }
+            }
+        }
+    }
+
     jclass cls = NULL;
     int actualIsStatic = ml->isStatic;
     char returnType = 'O';
@@ -1209,6 +1227,7 @@ static int java_createProxy(lua_State* L) {
     // 保存 Lua 表到注册表
     lua_pushvalue(L, 2);
     int tableRef = luaL_ref(L, LUA_REGISTRYINDEX);
+    lua_state_add_ref(L); // 该 handler 持有状态引用，防止状态被提前 lua_close
 
     // 创建 LuaInvocationHandler
     jclass handlerCls = (*env)->FindClass(env, "com/luajava/LuaInvocationHandler");

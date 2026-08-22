@@ -9,18 +9,18 @@ extern "C" {
 #endif
 /*
  * Class:     com_luajava_LuaFunctionObj
- * Method:    callMultiple
+ * Method:    callMultipleNative
  * Signature: ([Ljava/lang/Object;)[Ljava/lang/Object;
  */
-JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaFunctionObj_callMultiple
+JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaFunctionObj_callMultipleNative
   (JNIEnv *, jobject, jobjectArray);
 
 /*
  * Class:     com_luajava_LuaFunctionObj
- * Method:    destroy
+ * Method:    destroyNative
  * Signature: ()V
  */
-JNIEXPORT void JNICALL Java_com_luajava_LuaFunctionObj_destroy
+JNIEXPORT void JNICALL Java_com_luajava_LuaFunctionObj_destroyNative
   (JNIEnv *, jobject);
 
 #ifdef __cplusplus

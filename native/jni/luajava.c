@@ -25,6 +25,67 @@ pthread_mutex_t lua_mutex;   // 不再静态初始化
 #define LUA_LOCK()   pthread_mutex_lock(&lua_mutex)
 #define LUA_UNLOCK() pthread_mutex_unlock(&lua_mutex)
 
+// ========== lua_State 引用计数 ==========
+// 每个 lua_State 由 LuaRuntime 持有 1 个引用；
+// 每次创建 LuaFunctionObj / LuaInvocationHandler（会在注册表占用一个 ref）时再 +1。
+// 引用计数归零时才真正 lua_close，避免"先关 LuaRuntime、后销毁函数对象"导致的 use-after-free。
+typedef struct LuaStateEntry {
+    lua_State* L;
+    int refs;
+    struct LuaStateEntry* next;
+} LuaStateEntry;
+
+static LuaStateEntry* g_state_list = NULL;
+
+static LuaStateEntry* lua_state_find(lua_State* L) {
+    for (LuaStateEntry* e = g_state_list; e; e = e->next)
+        if (e->L == L) return e;
+    return NULL;
+}
+
+void lua_state_add_ref(lua_State* L) {
+    if (!L) return;
+    LUA_LOCK();
+    LuaStateEntry* e = lua_state_find(L);
+    if (e) {
+        e->refs++;
+    } else {
+        e = (LuaStateEntry*)malloc(sizeof(LuaStateEntry));
+        e->L = L;
+        e->refs = 1;
+        e->next = g_state_list;
+        g_state_list = e;
+    }
+    LUA_UNLOCK();
+}
+
+// 释放一个引用；返回 1 表示该状态应被真正 lua_close
+int lua_state_release_ref(lua_State* L) {
+    if (!L) return 0;
+    LUA_LOCK();
+    LuaStateEntry* e = lua_state_find(L);
+    if (!e) {
+        // 未被跟踪的状态：保守起见交给调用方关闭
+        LUA_UNLOCK();
+        return 1;
+    }
+    if (--e->refs > 0) {
+        LUA_UNLOCK();
+        return 0;
+    }
+    // 从链表移除并释放条目
+    if (g_state_list == e) {
+        g_state_list = e->next;
+    } else {
+        LuaStateEntry* prev = g_state_list;
+        while (prev && prev->next != e) prev = prev->next;
+        if (prev) prev->next = e->next;
+    }
+    free(e);
+    LUA_UNLOCK();
+    return 1;
+}
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     g_jvm = vm;
     
@@ -151,6 +212,7 @@ jobject lua_to_java_object(lua_State* L, JNIEnv* env, int idx) {
         case LUA_TFUNCTION: {
             lua_pushvalue(L, idx);
             int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+            lua_state_add_ref(L); // 该 LuaFunctionObj 占用状态的一个引用
             lua_pushstring(L, "luajava_stateptr");
             lua_rawget(L, LUA_REGISTRYINDEX);
             jlong statePtr = (jlong)lua_tointeger(L, -1);
@@ -177,6 +239,7 @@ JNIEXPORT jlong JNICALL Java_com_luajava_LuaRuntime__1newState(JNIEnv* env, jcla
         lua_pushstring(L, "luajava_stateptr");
         lua_pushinteger(L, (lua_Integer)(uintptr_t)L);
         lua_settable(L, LUA_REGISTRYINDEX);
+        lua_state_add_ref(L); // LuaRuntime 持有 1 个引用
     }
     LUA_UNLOCK();
     return (jlong)(uintptr_t)L;
@@ -208,7 +271,9 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1doString(JNIEnv* env, jobje
 JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1close(JNIEnv* env, jobject obj, jlong Lptr) {
     LUA_LOCK();
     lua_State* L = (lua_State*)(uintptr_t)Lptr;
-    if (L) {
+    // 释放 LuaRuntime 持有的引用；若仍有 LuaFunctionObj/LuaInvocationHandler 引用，
+    // 暂不关闭，等最后一个引用释放时才真正 lua_close，避免 use-after-free。
+    if (L && lua_state_release_ref(L)) {
         // 先清理该状态在 Promise 注册表中的回调引用，再关闭状态
         java_promise_cleanup_state(L);
         lua_close(L);
@@ -265,6 +330,7 @@ JNIEXPORT jint JNICALL Java_com_luajava_LuaRuntime__1compile(JNIEnv* env, jobjec
         return -1;
     }
     int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    lua_state_add_ref(L); // 该 LuaFunctionObj 占用状态的一个引用
     LUA_UNLOCK();
     return ref;
 }
@@ -347,7 +413,7 @@ JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaRuntime_callFunctionMultiple
 }
 
 // ========== LuaFunction.callMultiple ==========
-JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaFunctionObj_callMultiple
+JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaFunctionObj_callMultipleNative
   (JNIEnv* env, jobject obj, jobjectArray args) {
     LUA_LOCK();
     jclass cls = (*env)->GetObjectClass(env, obj);
@@ -401,7 +467,7 @@ JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaFunctionObj_callMultiple
 }
 
 // ========== LuaFunction.destroy ==========
-JNIEXPORT void JNICALL Java_com_luajava_LuaFunctionObj_destroy(JNIEnv* env, jobject obj) {
+JNIEXPORT void JNICALL Java_com_luajava_LuaFunctionObj_destroyNative(JNIEnv* env, jobject obj) {
     LUA_LOCK();
     jclass cls = (*env)->GetObjectClass(env, obj);
     jfieldID sf = (*env)->GetFieldID(env, cls, "statePtr", "J");
@@ -413,6 +479,11 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaFunctionObj_destroy(JNIEnv* env, jobj
         lua_State* L = (lua_State*)(uintptr_t)Lptr;
         luaL_unref(L, LUA_REGISTRYINDEX, ref);
         (*env)->SetIntField(env, obj, rf, -1);
+        // 释放该 LuaFunctionObj 对状态持有的引用；若为最后一个，则真正关闭状态
+        if (lua_state_release_ref(L)) {
+            java_promise_cleanup_state(L);
+            lua_close(L);
+        }
     }
     LUA_UNLOCK();
 }
@@ -595,6 +666,11 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaInvocationHandler_destroyNative
         lua_State* L = (lua_State*)(uintptr_t)Lptr;
         luaL_unref(L, LUA_REGISTRYINDEX, ref);
         (*env)->SetIntField(env, obj, rf, -1);
+        // 释放该 handler 对状态持有的引用；若为最后一个，则真正关闭状态
+        if (lua_state_release_ref(L)) {
+            java_promise_cleanup_state(L);
+            lua_close(L);
+        }
     }
 
     LUA_UNLOCK();
@@ -608,6 +684,11 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaInvocationHandler_destroyNative__JI
         lua_State* L = (lua_State*)(uintptr_t)Lptr;
         LUA_LOCK();
         luaL_unref(L, LUA_REGISTRYINDEX, ref);
+        // 释放该 handler 对状态持有的引用；若为最后一个，则真正关闭状态
+        if (lua_state_release_ref(L)) {
+            java_promise_cleanup_state(L);
+            lua_close(L);
+        }
         LUA_UNLOCK();
     }
 }

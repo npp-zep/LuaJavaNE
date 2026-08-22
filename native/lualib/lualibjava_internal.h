@@ -54,5 +54,7 @@ extern JNIEnv* getEnv(void);
 extern void throwLuaError(JNIEnv* env, lua_State* L, int errCode);
 extern void push_java_arg(lua_State* L, JNIEnv* env, jobject arg);
 extern jobject lua_to_java_object(lua_State* L, JNIEnv* env, int idx);
+extern void lua_state_add_ref(lua_State* L);    // lua_State 引用计数 +1
+extern int  lua_state_release_ref(lua_State* L); // lua_State 引用计数 -1；返回 1 表示应 lua_close
 
 #endif

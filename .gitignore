@@ -20,6 +20,8 @@ test_fea.lua
 test_lua.lua
 Review.md
 TODO.md
+*.log
+hs_err_*.log
 
 # 备份
 native/lualib/patches/
