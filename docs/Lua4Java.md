@@ -165,8 +165,10 @@ doubler.destroy();
 
 ### 6.3 资源释放
 
-`LuaFunctionObj` 持有 Lua 注册表引用，必须调用 `destroy()` 释放，否则可能造成内存泄漏。  
-也可以依赖 `Cleaner`（Java 9+）自动回收，但不推荐依赖 GC 时机。
+`LuaFunctionObj` 通过引用计数持有所属的 `lua_State`：即使先调用 `LuaRuntime.close()`，状态也会等到最后一个 `LuaFunctionObj`/`LuaInvocationHandler` 释放后才真正关闭，因此不会出现"状态已释放仍被引用"导致的崩溃。
+
+- 建议显式调用 `destroy()` 释放本机注册表引用（幂等，可重复调用）。
+- 未调用时，对象被 GC 回收会经 `finalize()` 兜底释放，但不推荐依赖 GC 时机。
 
 ---
 
@@ -276,7 +278,7 @@ try (LuaRuntime L = new LuaRuntime()) {
 ### 10.2 关闭 LuaFunctionObj
 
 ```java
-fn.destroy(); // 必须显式调用
+fn.destroy(); // 释放本机引用（建议显式调用；未调用时 GC 会兜底）
 ```
 
 ### 10.3 全局线程池
@@ -341,7 +343,7 @@ A：确保类上有 `@LuaModule` 注解，方法上有 `@LuaFunction`，且方�
 A：捕获 `LuaRuntimeError`（语法错误为 `LuaSyntaxError`，二者均为 `RuntimeException` 子类）并查看错误信息，通常是 Lua 语法错误或运行时错误。
 
 **Q：`LuaFunctionObj` 必须调用 `destroy()` 吗？**  
-A：强烈建议调用，否则可能造成本机内存泄漏。如果对象被 GC 回收，`finalize()` 会尝试释放，但不保证及时。
+A：建议调用以尽快释放本机资源。得益于引用计数，即使忘记调用或先关闭了 `LuaRuntime`，也不会崩溃：底层状态会在最后一个引用释放（含 GC 时的 `finalize()` 兜底）后才真正关闭。
 
 **Q：如何传递数组或集合？**  
 A：目前支持通过 Java 方法返回数组，或使用 `java.newArray` 在 Lua 中创建 Java 数组，然后传入 Java 方法。

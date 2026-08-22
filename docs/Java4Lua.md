@@ -68,22 +68,23 @@ print(s:indexOf("Java"))   -- 输出: 3
 
 ## 5. 调用静态方法
 
-通过 `类.方法名(参数...)` 调用静态方法。
+通过 `类.方法名(参数...)` 调用静态方法，也支持冒号形式 `类:方法名(参数...)`。
 
 ```lua
 local System = java.import("java.lang.System")
 local Math = java.import("java.lang.Math")
 
--- 获取系统属性
-local version = System:getProperty("java.version")   -- 注意：静态方法也使用冒号调用，但第一个参数是类本身
+-- 获取系统属性（点号或冒号均可）
+local version = System.getProperty("java.version")
 print(version)
 
 -- 数学函数
-local pi = Math:PI()        -- 获取常量（静态字段）
-local maxVal = Math:max(10, 20)
+local pi = Math.PI()            -- 获取常量（静态字段）
+local maxVal = Math:max(10, 20) -- 冒号形式调用静态方法
 ```
 
-**注意**：静态方法和静态字段都通过 `类:字段/方法` 访问（使用冒号，但底层自动识别静态性）。
+**注意**：静态方法和静态字段既可用 `类.方法(...)` 也可用 `类:方法(...)`。
+冒号形式传入的类本身会被自动识别并剥离，不会作为实参参与签名匹配，因此 `Math:max(10, 20)` 与 `Math.max(10, 20)` 等价。
 
 ---
 
