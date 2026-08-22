@@ -53,12 +53,31 @@ JNIEnv* getEnv() {
     return env;
 }
 
+// 抛出指定类名的 Java 异常（统一入口，简化错误处理）。
+// 若目标异常类不在 classpath，则回退到 RuntimeException，保证错误必达。
+void throwJavaException(JNIEnv* env, const char* className, const char* msg) {
+    if (!env || !msg) return;
+    jclass cls = (*env)->FindClass(env, className);
+    if (!cls) {
+        (*env)->ExceptionClear(env);
+        cls = (*env)->FindClass(env, "java/lang/RuntimeException");
+        if (!cls) return;
+    }
+    (*env)->ThrowNew(env, cls, msg);
+    (*env)->DeleteLocalRef(env, cls);
+}
+
+// 先对 Lua 错误码分类，再抛对应异常：
+//   LUA_ERRSYNTAX     -> LuaSyntaxError（编译期/load 错误）
+//   其他             -> LuaRuntimeError（执行期 pcall 错误）
 void throwLuaError(JNIEnv* env, lua_State* L, int errCode) {
     if (errCode != LUA_OK) {
         const char* msg = lua_tostring(L, -1);
         lua_pop(L, 1);
-        (*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/RuntimeException"),
-                         msg ? msg : "Unknown Lua error");
+        const char* ex = (errCode == LUA_ERRSYNTAX)
+            ? "com/luajava/exception/LuaSyntaxError"
+            : "com/luajava/exception/LuaRuntimeError";
+        throwJavaException(env, ex, msg ? msg : "Unknown Lua error");
     }
 }
 
@@ -169,14 +188,17 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1doString(JNIEnv* env, jobje
     LUA_LOCK();
     lua_State* L = (lua_State*)(uintptr_t)Lptr;
     const char* code = (*env)->GetStringUTFChars(env, script, NULL);
-    int err = luaL_dostring(L, code);
+    int err = luaL_loadstring(L, code);
     (*env)->ReleaseStringUTFChars(env, script, code);
+    if (err == LUA_OK) err = lua_pcall(L, 0, LUA_MULTRET, 0);
     if (err != LUA_OK) {
         const char* msg = lua_tostring(L, -1);
         lua_pop(L, 1);
         LUA_UNLOCK();
-        (*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/RuntimeException"),
-                         msg ? msg : "Unknown Lua error");
+        const char* ex = (err == LUA_ERRSYNTAX)
+            ? "com/luajava/exception/LuaSyntaxError"
+            : "com/luajava/exception/LuaRuntimeError";
+        throwJavaException(env, ex, msg ? msg : "Unknown Lua error");
         return;
     }
     LUA_UNLOCK();
@@ -238,8 +260,8 @@ JNIEXPORT jint JNICALL Java_com_luajava_LuaRuntime__1compile(JNIEnv* env, jobjec
         const char* msg = lua_tostring(L, -1);
         lua_pop(L, 1);
         LUA_UNLOCK();
-        (*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/RuntimeException"),
-                         msg ? msg : "compile error");
+        throwJavaException(env, "com/luajava/exception/LuaSyntaxError",
+                           msg ? msg : "compile error");
         return -1;
     }
     int ref = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -253,14 +275,17 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1doFile(JNIEnv* env, jobject
     LUA_LOCK();
     lua_State* L = (lua_State*)(uintptr_t)Lptr;
     const char* cpath = (*env)->GetStringUTFChars(env, path, NULL);
-    int err = luaL_dofile(L, cpath);
+    int err = luaL_loadfile(L, cpath);
     (*env)->ReleaseStringUTFChars(env, path, cpath);
+    if (err == LUA_OK) err = lua_pcall(L, 0, LUA_MULTRET, 0);
     if (err != LUA_OK) {
         const char* msg = lua_tostring(L, -1);
         lua_pop(L, 1);
         LUA_UNLOCK();
-        (*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/RuntimeException"),
-                         msg ? msg : "Unknown Lua error");
+        const char* ex = (err == LUA_ERRSYNTAX)
+            ? "com/luajava/exception/LuaSyntaxError"
+            : "com/luajava/exception/LuaRuntimeError";
+        throwJavaException(env, ex, msg ? msg : "Unknown Lua error");
         return;
     }
     LUA_UNLOCK();
@@ -283,7 +308,7 @@ JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaRuntime_callFunctionMultiple
     if (!lua_isfunction(L, -1)) {
         lua_pop(L, 1);
         LUA_UNLOCK();
-        (*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/RuntimeException"), "not a function");
+        throwJavaException(env, "com/luajava/exception/LuaRuntimeError", "not a function");
         return NULL;
     }
 
@@ -302,8 +327,8 @@ JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaRuntime_callFunctionMultiple
         const char* msg = lua_tostring(L, -1);
         lua_pop(L, 1);
         LUA_UNLOCK();
-        (*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/RuntimeException"),
-                         msg ? msg : "Lua error");
+        throwJavaException(env, "com/luajava/exception/LuaRuntimeError",
+                           msg ? msg : "Lua error");
         return NULL;
     }
 
@@ -337,7 +362,7 @@ JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaFunctionObj_callMultiple
     if (!lua_isfunction(L, -1)) {
         lua_pop(L, 1);
         LUA_UNLOCK();
-        (*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/RuntimeException"), "invalid function ref");
+        throwJavaException(env, "com/luajava/exception/LuaRuntimeError", "invalid function ref");
         return NULL;
     }
 
@@ -356,8 +381,8 @@ JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaFunctionObj_callMultiple
         const char* msg = lua_tostring(L, -1);
         lua_pop(L, 1);
         LUA_UNLOCK();
-        (*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/RuntimeException"),
-                         msg ? msg : "Lua error");
+        throwJavaException(env, "com/luajava/exception/LuaRuntimeError",
+                           msg ? msg : "Lua error");
         return NULL;
     }
 
@@ -493,8 +518,8 @@ JNIEXPORT jobject JNICALL Java_com_luajava_LuaInvocationHandler_invokeNative
             (*env)->DeleteLocalRef(env, jname);
         }
         LUA_UNLOCK();
-        (*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/RuntimeException"),
-                         "Lua table reference is invalid");
+        throwJavaException(env, "com/luajava/exception/LuaRuntimeError",
+                           "Lua table reference is invalid");
         return NULL;
     }
 
@@ -538,7 +563,7 @@ JNIEXPORT jobject JNICALL Java_com_luajava_LuaInvocationHandler_invokeNative
         lua_pop(L, 1);
         LUA_UNLOCK();
         // 抛出 Java 异常（pcall 无法捕获，但不会段错误）
-        (*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/RuntimeException"), msg);
+        throwJavaException(env, "com/luajava/exception/LuaRuntimeError", msg);
         return NULL;
     }
 

@@ -1,5 +1,6 @@
 package com.luajava;
 
+import com.luajava.exception.JavaInvocationError;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
@@ -20,22 +21,24 @@ public class LuaJavaCallback {
         try {
             return method.invoke(module, args);
         } catch (InvocationTargetException e) {
-            // 提取目标异常的原因
+            // 提取目标异常的原因；运行时异常/Error 原样重抛，保留语义；
+            // 其余 (checked) 统一包装为 JavaInvocationError。
             Throwable cause = e.getCause();
             if (cause instanceof RuntimeException) {
                 throw (RuntimeException) cause;
             } else if (cause instanceof Error) {
                 throw (Error) cause;
             } else {
-                // 包装为 RuntimeException 并保留原因
-                throw new RuntimeException("Error invoking " + method.getName() + ": " + cause.getMessage(), cause);
+                throw new JavaInvocationError(
+                        "Error invoking " + method.getName() + ": " + (cause != null ? cause.getMessage() : "null"),
+                        cause);
             }
         } catch (IllegalAccessException e) {
             // 访问权限错误
-            throw new RuntimeException("Illegal access invoking " + method.getName(), e);
+            throw new JavaInvocationError("Illegal access invoking " + method.getName(), e);
         } catch (Exception e) {
             // 其他异常（理论上不会发生）
-            throw new RuntimeException("Unexpected error invoking " + method.getName(), e);
+            throw new JavaInvocationError("Unexpected error invoking " + method.getName(), e);
         }
     }
 }

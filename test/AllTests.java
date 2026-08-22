@@ -1,5 +1,7 @@
 package com.luajava;
 
+import com.luajava.exception.LuaRuntimeError;
+import com.luajava.exception.LuaSyntaxError;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Disabled;
 import static org.junit.jupiter.api.Assertions.*;
@@ -70,8 +72,13 @@ public class AllTests extends BaseTest {
 
     // ========== 错误场景 ==========
     @Test void errClassNotFound() {
-        Exception ex = assertThrows(RuntimeException.class, () -> L.doString("java.import('java.lang.NonExistent')"));
+        // Lua 执行期错误应映射为结构化的 LuaRuntimeError
+        Exception ex = assertThrows(LuaRuntimeError.class, () -> L.doString("java.import('java.lang.NonExistent')"));
         assertTrue(ex.getMessage().contains("class not found"));
+    }
+    @Test void errSyntaxError() {
+        // Lua 编译期语法错误应映射为 LuaSyntaxError
+        assertThrows(LuaSyntaxError.class, () -> L.doString("function ("));
     }
     @Test void errMethodNotFound() {
         Exception ex = assertThrows(RuntimeException.class, () -> L.doString("java.import('java.lang.String'):foobar()"));

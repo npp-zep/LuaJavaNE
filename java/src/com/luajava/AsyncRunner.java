@@ -1,8 +1,13 @@
 package com.luajava;
 
+import com.luajava.exception.TypeConversionError;
 import java.lang.reflect.*;
 
 public class AsyncRunner {
+
+    // 记录最近一次参数类型转换失败的原因，用于诊断“无匹配方法/构造器”
+    private static String lastConversionError = null;
+
     // 同步调用实例方法（通用 fallback）
     public static String invokeInstance(Object obj, String methodName, String[] args) {
         try {
@@ -16,9 +21,9 @@ public class AsyncRunner {
                     return serialize(result);
                 }
             }
-            return "E:no matching method: " + methodName;
+            return "E:no matching method: " + methodName + detail();
         } catch (Throwable e) {
-            return "E:" + e.toString();
+            return "E:" + methodName + " failed -> " + describeError(e);
         }
     }
 
@@ -28,7 +33,7 @@ public class AsyncRunner {
             if (methodName.equals("new")) return callConstructor(cls, args);
             return callMethod(cls, null, methodName, args);
         } catch (Throwable e) {
-            return "E:" + e.toString();
+            return "E:" + className + "." + methodName + " -> " + describeError(e);
         }
     }
 
@@ -51,7 +56,7 @@ public class AsyncRunner {
                 }
             }
         }
-        if (bestCtor == null) return "E:no matching constructor";
+        if (bestCtor == null) return "E:no matching constructor" + detail();
         try {
             Object obj = bestCtor.newInstance(bestArgs);
             int oid = LuaAgent.registerObject(obj);
@@ -77,7 +82,7 @@ public class AsyncRunner {
                 }
             }
         }
-        if (best == null) return "E:no matching method: " + name;
+        if (best == null) return "E:no matching method: " + name + detail();
         try {
             return serialize(best.invoke(obj, bestArgs));
         } catch (InvocationTargetException e) {
@@ -109,6 +114,7 @@ public class AsyncRunner {
                 r[i] = convert(pairs[i * 2], pairs[i * 2 + 1], pt[i]);
                 if (r[i] == null) return null;
             } catch (Exception e) {
+                lastConversionError = e.getMessage();
                 return null;
             }
         }
@@ -117,13 +123,45 @@ public class AsyncRunner {
 
     private static Object convert(String v, String hint, Class<?> t) {
         if (t == String.class || t == Object.class) return v;
-        if (t == int.class || t == Integer.class) return Integer.parseInt(v);
-        if (t == long.class || t == Long.class) return Long.parseLong(v);
-        if (t == double.class || t == Double.class) return Double.parseDouble(v);
-        if (t == float.class || t == Float.class) return Float.parseFloat(v);
-        if (t == boolean.class || t == Boolean.class) return Boolean.parseBoolean(v);
-        if (t == byte[].class) return v.getBytes();
+        try {
+            if (t == int.class || t == Integer.class) return Integer.parseInt(v);
+            if (t == long.class || t == Long.class) return Long.parseLong(v);
+            if (t == double.class || t == Double.class) return Double.parseDouble(v);
+            if (t == float.class || t == Float.class) return Float.parseFloat(v);
+            if (t == boolean.class || t == Boolean.class) return Boolean.parseBoolean(v);
+            if (t == byte[].class) return v.getBytes();
+        } catch (NumberFormatException nfe) {
+            throw new TypeConversionError(
+                    "cannot convert '" + v + "' to " + t.getSimpleName(), nfe);
+        }
         return null;
+    }
+
+    // 生成可读的错误描述（类型 + 消息 + 根因链），供 E: 字符串携带诊断信息
+    private static String describeError(Throwable t) {
+        if (t == null) return "null";
+        StringBuilder sb = new StringBuilder();
+        if (t.getMessage() != null) {
+            sb.append(t.getClass().getSimpleName()).append(": ").append(t.getMessage());
+        } else {
+            sb.append(t.toString());
+        }
+        Throwable cause = t.getCause();
+        int depth = 0;
+        while (cause != null && cause != t && depth < 3) {
+            sb.append(" <- ").append(cause.getClass().getSimpleName())
+              .append(cause.getMessage() != null ? ": " + cause.getMessage() : "");
+            cause = cause.getCause();
+            depth++;
+        }
+        return sb.toString();
+    }
+
+    // 消费最近一次类型转换失败的原因，返回 " (reason)" 或空串
+    private static String detail() {
+        String d = lastConversionError;
+        lastConversionError = null;
+        return d != null ? " (" + d + ")" : "";
     }
 
     private static String serialize(Object obj) {
