@@ -255,7 +255,7 @@ print(obj:length())               -- 输出 11
 
 ### 9.7 错误处理
 
-如果异步任务抛出异常，`checkPromise` 会返回错误字符串（以 `"E:"` 开头）。
+如果异步任务抛出异常，`checkPromise` 会返回错误字符串（以 `"E:"` 开头，内容为 `类名.方法 -> 异常类型: 消息`，已包含根因）。
 
 ```lua
 local id = java.promise()

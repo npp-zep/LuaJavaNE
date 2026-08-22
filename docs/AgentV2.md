@@ -102,7 +102,7 @@ end
 - `id` (integer)：Promise ID。
 - `callback` (function)：完成回调，签名 `callback(err, result...)`。
   - `err == nil`：任务成功，`result...` 与 `checkPromise` 返回的结果值**完全一致**（含多返回值、`O:` 对象 id、`nil`）。
-  - `err == string`：任务失败，内容即 `E:` 前缀后的错误信息（如 `"java.lang.ClassNotFoundException: ..."`）。
+  - `err == string`：任务失败，内容即 `E:` 前缀后的错误信息，格式为 `类名.方法 -> 异常类型: 消息`（如 `"java.lang.NonExistent.foo -> ClassNotFoundException: java.lang.NonExistent"`），已包含根因。
 
 **行为**：
 - 若任务**尚未完成**：注册回调，任务完成后自动触发一次。

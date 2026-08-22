@@ -77,7 +77,7 @@ Object[] results = L.callFunctionMultiple("swap", "hello", "world");
 
 ### 3.3 调用带错误处理的函数
 
-若 Lua 函数抛出错误，`callFunction` 会抛出 `RuntimeException`，错误信息来自 Lua 栈。
+若 Lua 函数抛出错误，`callFunction` 会抛出 `LuaRuntimeError`（其父类即 `RuntimeException`），错误信息来自 Lua 栈。
 
 ---
 
@@ -238,8 +238,22 @@ System.out.println(g.sayHello("Java")); // Hello, Java from Lua!
 
 ## 9. 异常处理
 
-- Lua 执行错误会抛出 `java.lang.RuntimeException`，错误信息包含 Lua 栈回溯。
-- Java 方法通过注解暴露给 Lua 时，若抛出异常，异常会被捕获并转换为 Lua 错误，然后在 Java 侧重新抛出（保留原因）。
+LuaJavaNE 提供了一套基于 `RuntimeException` 的结构化异常层次（包 `com.luajava.exception`），
+既有 `catch (RuntimeException)` 用法完全向后兼容：
+
+```
+java.lang.RuntimeException
+ └── LuaJavaException (抽象基类)
+     ├── LuaRuntimeError      — Lua 执行期错误（doString/doFile/callFunction 的 pcall 失败）
+     │    └── LuaSyntaxError  — Lua 编译期语法错误（compile()，对应 LUA_ERRSYNTAX）
+     ├── JavaInvocationError  — Lua 调用已注册 Java 方法失败时对 checked 异常的包装
+     └── TypeConversionError  — Lua↔Java 参数类型转换失败
+```
+
+- Lua 执行错误会抛出 `LuaRuntimeError`（语法错误为 `LuaSyntaxError`），错误信息包含 Lua 栈回溯。
+- Java 方法通过注解暴露给 Lua 时，若抛出异常会被捕获并转换为 Lua 错误，然后在 Java 侧重新抛出：
+  方法的 `RuntimeException`/`Error` **原样重抛**，其余 checked 异常统一包装为 `JavaInvocationError`（保留原因）。
+- 以上异常均为 `RuntimeException` 的子类，可直接 `catch (RuntimeException)` 统一处理。
 
 ---
 
@@ -324,7 +338,7 @@ public class Main {
 A：确保类上有 `@LuaModule` 注解，方法上有 `@LuaFunction`，且方法为 `public`。
 
 **Q：调用 `L.doString` 时抛异常怎么办？**  
-A：捕获 `RuntimeException` 并查看错误信息，通常是 Lua 语法错误或运行时错误。
+A：捕获 `LuaRuntimeError`（语法错误为 `LuaSyntaxError`，二者均为 `RuntimeException` 子类）并查看错误信息，通常是 Lua 语法错误或运行时错误。
 
 **Q：`LuaFunctionObj` 必须调用 `destroy()` 吗？**  
 A：强烈建议调用，否则可能造成本机内存泄漏。如果对象被 GC 回收，`finalize()` 会尝试释放，但不保证及时。

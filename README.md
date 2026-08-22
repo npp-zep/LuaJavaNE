@@ -179,12 +179,21 @@ print(a, b, c)  -- a   b   c
 
 ### 错误处理
 
-异步任务中抛出的异常会被捕获并作为字符串返回：
+异步任务中抛出的异常会被捕获并作为字符串返回，消息格式为
+`类名.方法 -> 异常类型: 消息`（包含根因信息）：
 
 ~~~lua
 java.runAsync(id, "java.lang.NonExistent", "foo", "")
--- checkPromise 返回: "java.lang.ClassNotFoundException: java.lang.NonExistent"
+-- checkPromise 返回: "java.lang.NonExistent.foo -> ClassNotFoundException: java.lang.NonExistent"
 ~~~
+
+同步调用（Java 侧）的错误则抛出结构化异常，全部继承 `RuntimeException`，对既有
+`catch (RuntimeException)` 完全向后兼容：
+
+- `LuaRuntimeError` —— Lua 执行期错误
+- `LuaSyntaxError` —— Lua 编译期语法错误（`LuaRuntimeError` 的子类）
+- `JavaInvocationError` —— Lua 调用已注册 Java 方法失败
+- `TypeConversionError` —— Lua ⇄ Java 参数类型转换失败
 
 ### 回调式消费（java.onComplete）
 
