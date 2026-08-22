@@ -59,7 +59,7 @@ public class AsyncRunner {
         if (bestCtor == null) return "E:no matching constructor" + detail();
         try {
             Object obj = bestCtor.newInstance(bestArgs);
-            int oid = LuaAgent.registerObject(obj);
+            int oid = LuaAgent.registerObjectStrong(obj);
             return "O:" + oid;
         } catch (InvocationTargetException e) {
             return "E:" + e.getCause();
@@ -170,8 +170,8 @@ public class AsyncRunner {
         if (obj instanceof Integer || obj instanceof Long) return "I:" + obj;
         if (obj instanceof Number) return "N:" + obj;
         if (obj instanceof Boolean) return "B:" + obj;
-        // 非基本类型：注册到对象池，返回 O:<id>
-        int oid = LuaAgent.registerObject(obj);
+        // 非基本类型：强引用注册到对象池，返回 O:<id>（getObject 取走时释放）
+        int oid = LuaAgent.registerObjectStrong(obj);
         return "O:" + oid;
     }
 

@@ -22,6 +22,9 @@ public class LuaAgent {
     
     // ============ 对象注册 ============
     private static final ConcurrentHashMap<Integer, WeakReference<Object>> objectRegistry = new ConcurrentHashMap<>();
+    // 强引用表：用于异步任务产出的对象，保证在 getObject 取走前不会被 GC；
+    // getObject 返回时即移除强引用（返回的 userdata 自行持有全局引用即可保证存活）
+    private static final ConcurrentHashMap<Integer, Object> pinnedObjects = new ConcurrentHashMap<>();
     private static final AtomicInteger objectIdCounter = new AtomicInteger(1);
     private static final int MAX_REGISTERED_OBJECTS = 10000;
     
@@ -307,7 +310,20 @@ public class LuaAgent {
         return id;
     }
 
+    // 异步结果对象：以强引用登记，保证在 getObject 前不被 GC
+    public static int registerObjectStrong(Object obj) {
+        int id = objectIdCounter.getAndIncrement();
+        pinnedObjects.put(id, obj);
+        objectRegistry.put(id, new WeakReference<>(obj));
+        return id;
+    }
+
     public static Object getObject(int id) {
+        // 强引用(异步)对象：取走即释放，返回的 userdata 自行持有全局引用保证存活
+        Object pinned = pinnedObjects.remove(id);
+        if (pinned != null) {
+            return pinned;
+        }
         WeakReference<Object> ref = objectRegistry.get(id);
         if (ref == null) {
             return null;
@@ -317,6 +333,11 @@ public class LuaAgent {
             objectRegistry.remove(id);
         }
         return obj;
+    }
+
+    // 释放一个尚未被 getObject 取走的异步对象强引用（防泄漏）
+    public static boolean unregisterStrongObject(int id) {
+        return pinnedObjects.remove(id) != null;
     }
 
     public static boolean unregisterObject(int id) {
@@ -342,6 +363,7 @@ public class LuaAgent {
 
     public static void clearRegistry() {
         objectRegistry.clear();
+        pinnedObjects.clear();
     }
 
     public static String getRegistryStats() {
