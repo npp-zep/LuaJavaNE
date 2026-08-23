@@ -1,7 +1,6 @@
 package com.luajava;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Disabled;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class AsyncTest extends BaseTest {
@@ -35,18 +34,18 @@ public class AsyncTest extends BaseTest {
     }
 
     @Test
-    @Disabled("Multi-return parsing differs on CI glibc")
-    void asyncMultipleReturns() {
+    void asyncArrayResult() {
+        // split 返回 String[]，异步结果为对象 ID，经 java.getObject 取回后应为 Java.Array（0 基索引、# 长度）
         L.doString("String = java.import('java.lang.String')");
         L.doString("s = String:new('a,b,c')");
         L.doString("id = java.promise()");
         L.doString("java.runAsyncObj(id, s, 'split', ',')");
-        L.doString("repeat _res = {java.checkPromise(id)}; _done = tostring(_res[1]) until _done == 'true'");
-        L.doString("_a = tostring(_res[2]); _b = tostring(_res[3]); _c = tostring(_res[4])");
-        assertEquals("true", L.getGlobal("_done"));
-        assertEquals("a", L.getGlobal("_a"));
-        assertEquals("b", L.getGlobal("_b"));
-        assertEquals("c", L.getGlobal("_c"));
+        L.doString("repeat done, oid = java.checkPromise(id) until done");
+        L.doString("arr = java.getObject(oid)");
+        L.doString("function n() return #arr end; function e(i) return arr[i] end");
+        assertEquals(3, ((Number) L.callFunction("n")).intValue());
+        assertEquals("a", L.callFunction("e", 0));
+        assertEquals("c", L.callFunction("e", 2));
     }
 
     @Test
@@ -66,7 +65,6 @@ public class AsyncTest extends BaseTest {
     }
 
     @Test
-    @Disabled("CI environment has limited thread scheduling")
     void asyncConcurrent() {
         int N = 10;
         L.doString("Thread = java.import('java.lang.Thread')");

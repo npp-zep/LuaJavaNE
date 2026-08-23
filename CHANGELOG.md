@@ -3,9 +3,13 @@
 - `LuaRuntime.compile()` crash on x86_64 Linux — use-after-free resolved via reference counting on `lua_State`: each `LuaFunctionObj` / `LuaInvocationHandler` holds a reference on the state, which is only `lua_close`d when the last reference is released (even if `LuaRuntime.close()` is called first)
 - Static-method colon call syntax `Class:method(...)` now correctly strips the implicit class `self` argument, fixing "method not found" for static methods (e.g. `Math:max(10, 20)`)
 - `LuaFunctionObj` JNI method names aligned with the Java declarations (`callMultipleNative` / `destroyNative`)
+- Dynamic proxy `Object`-returning interface methods (e.g. `Supplier.get()`) now convert boxed/string results to native Lua values instead of opaque userdata, matching Java→Lua argument/return conversion
 
 ### Changed
 - Docs: removed the known "compile() crash on x86_64" limitation; documented static-method colon syntax and the refcount-based lifecycle of `LuaFunctionObj`
+- **Unified Java array behavior**: arrays returned by Java methods are now wrapped with the same `Java.Array` userdata as `java.newArray` (0-based indexing, `#` length, element read/write); `String[]` returned by Java now reads back as Lua strings, consistent with `java.newArray("String", n)`
+- **Completed Java→Lua argument passing** (`LuaRuntime.callFunction*`): previously only `String`/`Double`/`Integer`/`Boolean` were converted (others became `nil`); now all boxed number types, `Character`, arrays (as `Java.Array`) and arbitrary Java objects (as userdata) are passed through consistently, matching the return-value conversion
+- `make test` now launches the JVM with `-Xshare:off` to avoid class-data-sharing archive crashes on some JDK 25 sandbox environments
 
 ## [2.2.5] - 2026-08-15
 ### Added

@@ -69,7 +69,7 @@ test: all
 	$(JAVAC_BIN) -d $(OUT_DIR) -cp $(OUT_DIR):$(JLINE_JAR):$(JUNIT_JAR) $(TEST_SRCS)
 	@echo "Test classes compiled."
 	@echo "Running JUnit tests..."
-	$(JAVA_BIN) -Dluajava.library.path=$(SO_PATH) \
+	$(JAVA_BIN) -Xshare:off -Dluajava.library.path=$(SO_PATH) \
 	     -cp $(OUT_DIR):$(JLINE_JAR):$(JUNIT_JAR) \
 	     org.junit.platform.console.ConsoleLauncher \
 	     --select-class=com.luajava.AllTests \

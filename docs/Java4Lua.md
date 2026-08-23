@@ -120,28 +120,29 @@ print(Math.PI)   -- 输出 3.1415926535898
 
 使用 `java.newArray(类型名, 长度)` 创建基本类型或对象数组。
 
-支持的 `类型名`：
+支持的 `类型名`（仅以下四种，其他类型名会报 `unsupported array type`）：
 - `"int"` / `"java.lang.Integer"`
 - `"double"` / `"java.lang.Double"`
 - `"boolean"` / `"java.lang.Boolean"`
 - `"String"` / `"java.lang.String"`
-- 其他对象类型（如 `"java.util.Date"`）
 
 ```lua
 -- 创建 int 数组
 local intArr = java.newArray("int", 5)
-intArr[1] = 10   -- 索引从 1 开始（Lua 风格）
-intArr[2] = 20
-print(intArr[1]) -- 输出 10
+intArr[0] = 10   -- 索引从 0 开始（与 Java 一致）
+intArr[1] = 20
+print(intArr[0]) -- 输出 10
 print(#intArr)   -- 输出 5（数组长度）
 
 -- 创建 String 数组
 local strArr = java.newArray("String", 3)
-strArr[1] = "a"
-strArr[2] = "b"
+strArr[0] = "a"
+strArr[1] = "b"
 ```
 
-**注意**：数组索引从 **1** 开始（遵循 Lua 习惯），而非 Java 的 0。
+**索引**：数组索引从 **0** 开始（与 Java 一致），越界访问（`idx < 0` 或 `idx >= 长度`）会抛出 `array index out of bounds` 错误；`#arr` 返回数组长度。
+
+**行为统一**：Java 方法返回的数组（如 `String[]`、`int[]`）与 `java.newArray` 创建的数组使用完全相同的 `Java.Array` 包装，同样支持 0 基索引、`#` 长度和元素读写。元素读取时：`int`/`double`/`boolean` 基本类型转为对应的 Lua 值，`String` 转为 Lua 字符串，其他对象元素包装为 Java 对象 userdata。
 
 ---
 
@@ -171,7 +172,7 @@ end
 ```
 
 **类型转换**：
-- 参数：`String`、整数、浮点、布尔转换为对应的 Lua 值；其他 Java 对象参数目前以 `nil` 传入。
+- 参数：`String`、整数、浮点、布尔、字符转换为对应的 Lua 值；`null` 转为 `nil`；Java 数组包装为 `Java.Array` userdata；其他 Java 对象包装为 Java 对象 userdata（可继续调用其方法）。
 - 返回值：`String`、整数、浮点、布尔、`null` 转换为对应的 Lua 值；其他对象包装为 userdata（可继续调用其方法）。
 
 完整可运行示例见 `examples/proxy.lua`。
@@ -339,6 +340,15 @@ java.deleteStore("myKey")
 - Java 基本类型（int, double, boolean 等）→ 对应的 Lua 类型
 - Java 对象 → Lua userdata（可继续调用其方法）
 
+**Java→Lua 传参**（`LuaRuntime.callFunction` / `callFunctionMultiple` 传给 Lua 函数的参数，与返回转换保持一致）：
+- Java `null` → Lua `nil`
+- Java `String` → Lua `string`
+- Java `char` / `Character` → Lua 单字符字符串
+- Java `byte` / `short` / `int` / `long` → Lua 整数；`float` / `double` → Lua 浮点数
+- Java 布尔 → Lua `boolean`
+- Java 数组 → Lua `Java.Array` userdata（0 基索引、`#` 长度、元素读写）
+- 其他 Java 对象 → Lua Java 对象 userdata（可继续调用其方法）
+
 ---
 
 ## 12. 注意事项
@@ -349,7 +359,7 @@ java.deleteStore("myKey")
 
 3. **资源释放**：Java 对象由 JVM GC 管理，但 Lua userdata 会持有 JNI 全局引用，应避免大量临时对象造成内存压力。必要时可显式调用 `java.import("java.lang.System"):gc()` 建议 GC。
 
-4. **数组索引**：Java 数组在 Lua 中索引从 1 开始，与 Lua 惯例一致。
+4. **数组索引**：Java 数组在 Lua 中索引从 0 开始（与 Java 一致），`#arr` 返回数组长度。
 
 5. **异步超时**：目前没有提供超时机制，可在 Lua 侧用 `utils.timer` 自行实现。
 
@@ -374,12 +384,12 @@ print(s:length())   -- 17
 -- 静态方法
 print(System:currentTimeMillis())
 
--- 数组
+-- 数组（索引从 0 开始，与 Java 一致）
 local arr = java.newArray("int", 3)
-arr[1] = 10
-arr[2] = 20
-arr[3] = 30
-for i = 1, #arr do print(arr[i]) end
+arr[0] = 10
+arr[1] = 20
+arr[2] = 30
+for i = 0, #arr - 1 do print(arr[i]) end
 
 -- 异步调用
 local id = java.promise()

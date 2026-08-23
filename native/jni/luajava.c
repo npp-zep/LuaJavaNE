@@ -149,34 +149,78 @@ void push_java_arg(lua_State* L, JNIEnv* env, jobject arg) {
         lua_pushnil(L);
         return;
     }
-    if ((*env)->IsInstanceOf(env, arg, (*env)->FindClass(env, "java/lang/String"))) {
+
+    // String -> Lua 字符串
+    jclass cls = (*env)->FindClass(env, "java/lang/String");
+    if ((*env)->IsInstanceOf(env, arg, cls)) {
+        (*env)->DeleteLocalRef(env, cls);
         const char* str = (*env)->GetStringUTFChars(env, (jstring)arg, NULL);
         lua_pushstring(L, str);
         (*env)->ReleaseStringUTFChars(env, (jstring)arg, str);
         return;
     }
-    if ((*env)->IsInstanceOf(env, arg, (*env)->FindClass(env, "java/lang/Double"))) {
-        jclass cls = (*env)->GetObjectClass(env, arg);
-        jmethodID mid = (*env)->GetMethodID(env, cls, "doubleValue", "()D");
-        lua_pushnumber(L, (*env)->CallDoubleMethod(env, arg, mid));
+    (*env)->DeleteLocalRef(env, cls);
+
+    // Boolean -> Lua 布尔
+    cls = (*env)->FindClass(env, "java/lang/Boolean");
+    if ((*env)->IsInstanceOf(env, arg, cls)) {
         (*env)->DeleteLocalRef(env, cls);
-        return;
-    }
-    if ((*env)->IsInstanceOf(env, arg, (*env)->FindClass(env, "java/lang/Integer"))) {
-        jclass cls = (*env)->GetObjectClass(env, arg);
-        jmethodID mid = (*env)->GetMethodID(env, cls, "intValue", "()I");
-        lua_pushinteger(L, (*env)->CallIntMethod(env, arg, mid));
-        (*env)->DeleteLocalRef(env, cls);
-        return;
-    }
-    if ((*env)->IsInstanceOf(env, arg, (*env)->FindClass(env, "java/lang/Boolean"))) {
-        jclass cls = (*env)->GetObjectClass(env, arg);
+        cls = (*env)->GetObjectClass(env, arg);
         jmethodID mid = (*env)->GetMethodID(env, cls, "booleanValue", "()Z");
         lua_pushboolean(L, (*env)->CallBooleanMethod(env, arg, mid));
         (*env)->DeleteLocalRef(env, cls);
         return;
     }
-    lua_pushnil(L);
+    (*env)->DeleteLocalRef(env, cls);
+
+    // Character -> Lua 单字符字符串
+    cls = (*env)->FindClass(env, "java/lang/Character");
+    if ((*env)->IsInstanceOf(env, arg, cls)) {
+        (*env)->DeleteLocalRef(env, cls);
+        cls = (*env)->GetObjectClass(env, arg);
+        jmethodID mid = (*env)->GetMethodID(env, cls, "charValue", "()C");
+        jchar ch = (*env)->CallCharMethod(env, arg, mid);
+        char buf[1] = { (char)ch };
+        lua_pushlstring(L, buf, 1);
+        (*env)->DeleteLocalRef(env, cls);
+        return;
+    }
+    (*env)->DeleteLocalRef(env, cls);
+
+    // Number：整数类 -> Lua 整数，浮点类 -> Lua 浮点
+    cls = (*env)->FindClass(env, "java/lang/Number");
+    if ((*env)->IsInstanceOf(env, arg, cls)) {
+        (*env)->DeleteLocalRef(env, cls);
+        cls = (*env)->GetObjectClass(env, arg);
+        jclass intCls   = (*env)->FindClass(env, "java/lang/Integer");
+        jclass longCls  = (*env)->FindClass(env, "java/lang/Long");
+        jclass shortCls = (*env)->FindClass(env, "java/lang/Short");
+        jclass byteCls  = (*env)->FindClass(env, "java/lang/Byte");
+        jclass dblCls   = (*env)->FindClass(env, "java/lang/Double");
+        jclass fltCls   = (*env)->FindClass(env, "java/lang/Float");
+        if ((*env)->IsInstanceOf(env, arg, intCls) ||
+            (*env)->IsInstanceOf(env, arg, longCls) ||
+            (*env)->IsInstanceOf(env, arg, shortCls) ||
+            (*env)->IsInstanceOf(env, arg, byteCls)) {
+            jmethodID mid = (*env)->GetMethodID(env, cls, "longValue", "()J");
+            lua_pushinteger(L, (lua_Integer)(*env)->CallLongMethod(env, arg, mid));
+        } else {
+            jmethodID mid = (*env)->GetMethodID(env, cls, "doubleValue", "()D");
+            lua_pushnumber(L, (lua_Number)(*env)->CallDoubleMethod(env, arg, mid));
+        }
+        (*env)->DeleteLocalRef(env, fltCls);
+        (*env)->DeleteLocalRef(env, dblCls);
+        (*env)->DeleteLocalRef(env, byteCls);
+        (*env)->DeleteLocalRef(env, shortCls);
+        (*env)->DeleteLocalRef(env, longCls);
+        (*env)->DeleteLocalRef(env, intCls);
+        (*env)->DeleteLocalRef(env, cls);
+        return;
+    }
+    (*env)->DeleteLocalRef(env, cls);
+
+    // 其他对象（含数组）：包装为 userdata（数组自动使用 Java.Array 语义）
+    new_java_object_ud(L, arg);
 }
 
 jobject lua_to_java_object(lua_State* L, JNIEnv* env, int idx) {

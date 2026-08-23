@@ -126,6 +126,58 @@ static int new_java_class_ud(lua_State* L, jclass cls) {
     return 1;
 }
 
+// ========== Java 数组包装 ==========
+
+// 由数组的组件类型 Class 解析元素类型代码：
+//   I/J/B/S = int/long/byte/short，D/F = double/float，Z = boolean，C = char，
+//   T = String，A = 嵌套数组（多维），O = 其他对象
+static char array_element_type_from_class(JNIEnv* env, jclass compCls) {
+    if (!compCls) return 'O';
+    jclass cCls = (*env)->GetObjectClass(env, compCls);
+    jmethodID getName = (*env)->GetMethodID(env, cCls, "getName", "()Ljava/lang/String;");
+    jstring jname = (jstring)(*env)->CallObjectMethod(env, compCls, getName);
+    const char* name = (*env)->GetStringUTFChars(env, jname, NULL);
+    char t = 'O';
+    if      (!strcmp(name, "int"))     t = 'I';
+    else if (!strcmp(name, "long"))    t = 'J';
+    else if (!strcmp(name, "byte"))    t = 'B';
+    else if (!strcmp(name, "short"))   t = 'S';
+    else if (!strcmp(name, "double"))  t = 'D';
+    else if (!strcmp(name, "float"))   t = 'F';
+    else if (!strcmp(name, "boolean")) t = 'Z';
+    else if (!strcmp(name, "char"))    t = 'C';
+    else if (!strcmp(name, "java.lang.String")) t = 'S';
+    else if (name[0] == '[')           t = 'A';
+    (*env)->ReleaseStringUTFChars(env, jname, name);
+    (*env)->DeleteLocalRef(env, jname);
+    (*env)->DeleteLocalRef(env, cCls);
+    return t;
+}
+
+// 将已有 Java 数组对象包装为 Java.Array userdata（与 java.newArray 相同的元表与元素语义）。
+// arrCls 可传 NULL（内部自行获取）；传入非 NULL 时由本函数负责释放该局部引用。
+static JavaArray* new_java_array_ud(lua_State* L, JNIEnv* env, jobject arrayObj, jclass arrCls) {
+    jclass cls = arrCls ? arrCls : (*env)->GetObjectClass(env, arrayObj);
+    jclass cCls = (*env)->GetObjectClass(env, cls);
+    jmethodID getComp = (*env)->GetMethodID(env, cCls, "getComponentType", "()Ljava/lang/Class;");
+    jclass compCls = (jclass)(*env)->CallObjectMethod(env, cls, getComp);
+    char etype = array_element_type_from_class(env, compCls);
+
+    JavaArray* arr = (JavaArray*)lua_newuserdatauv(L, sizeof(JavaArray), 0);
+    arr->arrayObj     = (*env)->NewGlobalRef(env, arrayObj);
+    arr->elementClass = compCls ? (jclass)(*env)->NewWeakGlobalRef(env, compCls) : NULL;
+    arr->elementType  = etype;
+    arr->length       = (*env)->GetArrayLength(env, arrayObj);
+
+    luaL_getmetatable(L, JAVAARRAY_META);
+    lua_setmetatable(L, -2);
+
+    (*env)->DeleteLocalRef(env, compCls);
+    (*env)->DeleteLocalRef(env, cCls);
+    (*env)->DeleteLocalRef(env, cls);
+    return arr;
+}
+
 int new_java_object_ud(lua_State* L, jobject obj) {
     if (!obj) { lua_pushnil(L); return 1; }
     JNIEnv* env = getEnv();
@@ -143,33 +195,9 @@ int new_java_object_ud(lua_State* L, jobject obj) {
     (*env)->DeleteLocalRef(env, classClass);
 
     if (isArray) {
-        jsize arrayLength = (*env)->GetArrayLength(env, obj);
-
-        JavaUserdata* ud = (JavaUserdata*)lua_newuserdatauv(L, sizeof(JavaUserdata), 2);
-
-        ud->obj = (*env)->NewGlobalRef(env, obj);
-        ud->cls = (jclass)(*env)->NewWeakGlobalRef(env, objCls);
-        ud->isClass = 0;
-
-        lua_pushinteger(L, arrayLength);
-        lua_setiuservalue(L, -2, 1);
-
-        // 判断是否为基本类型数组：数组类名形如 "[Ljava.lang.String;" / "[I" / "[[D"
-        jclass classCls2 = (*env)->GetObjectClass(env, objCls);
-        jmethodID getName2 = (*env)->GetMethodID(env, classCls2, "getName", "()Ljava/lang/String;");
-        jstring className2 = (jstring)(*env)->CallObjectMethod(env, objCls, getName2);
-        const char* cname = (*env)->GetStringUTFChars(env, className2, NULL);
-        int isPrimitiveArray = (cname[1] != 'L' && cname[1] != '[');
-        (*env)->ReleaseStringUTFChars(env, className2, cname);
-        (*env)->DeleteLocalRef(env, className2);
-        (*env)->DeleteLocalRef(env, classCls2);
-        (*env)->DeleteLocalRef(env, objCls);
-
-        lua_pushboolean(L, isPrimitiveArray);
-        lua_setiuservalue(L, -2, 2);
-
-        luaL_getmetatable(L, JAVAOBJECT_META);
-        lua_setmetatable(L, -2);
+        // 统一包装为 Java.Array userdata，与 java.newArray 完全一致
+        // （new_java_array_ud 内部会释放传入的 objCls 局部引用）
+        new_java_array_ud(L, env, obj, objCls);
         return 1;
     }
 
@@ -676,8 +704,10 @@ static int push_java_result(lua_State* L, JNIEnv* env, jvalue result, char retur
             return 1;
         }
         default:
+            // Object 返回值：优先转换为 Lua 原生类型（String/数字/布尔/数组），
+            // 其余对象包装为 Java 对象 userdata —— 与 Java→Lua 传参行为一致
             if (!result.l) { lua_pushnil(L); }
-            else { new_java_object_ud(L, result.l); }
+            else { push_java_arg(L, env, result.l); }
             return 1;
     }
 }
