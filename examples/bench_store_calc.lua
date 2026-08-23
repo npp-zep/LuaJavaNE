@@ -31,13 +31,13 @@ for i = 1, iterations do
 end
 print("Lua local:", string.format("%.6f", os.clock() - start), "s")
 
--- 4. 从 Java 字段取值和回写
+-- 4. 从 Java 字段取值和回写（Point.x 为 int 字段，用整数运算保证可回写）
 local Point = java.import('java.awt.Point')
 local p = Point:new(1000, 0)
 start = os.clock()
 for i = 1, iterations do
     local x = p.x
-    x = x + 0.5
+    x = x + 1
     p.x = x
 end
 print("Java field fetch→calc→store:", string.format("%.6f", os.clock() - start), "s")

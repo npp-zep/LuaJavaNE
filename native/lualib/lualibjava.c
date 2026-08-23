@@ -413,6 +413,67 @@ static int push_boxed_object(lua_State* L, JNIEnv* env, jobject val) {
 // 反射查找并调用方法（Method.invoke），支持任意返回类型与自动装箱。
 // 逐个尝试匹配的重载；某个重载抛异常时继续尝试下一个。成功返回压入 Lua 栈的个数，
 // 全部失败返回 -1。
+
+// 由 Class 生成 JNI 类型签名（如 "I"、"Ljava/lang/String;"、"Ljava/lang/Object;"、
+// "[I"、"[[Ljava/lang/String;" 等）。调用方保证 out 缓冲区足够大。
+static void jni_sig_from_class(JNIEnv* env, jclass c, char* out, size_t sz) {
+    jclass classCls = (*env)->GetObjectClass(env, c);
+    jmethodID getName = (*env)->GetMethodID(env, classCls, "getName", "()Ljava/lang/String;");
+    jstring nm = (jstring)(*env)->CallObjectMethod(env, c, getName);
+    const char* n = (*env)->GetStringUTFChars(env, nm, NULL);
+    if (n[0] == '[') {
+        // 数组类型：getName 已形如 "[I" / "[Ljava.lang.String;"，只需把 '.' 换为 '/'
+        size_t k = 0;
+        for (const char* p = n; *p && k + 1 < sz; p++) out[k++] = (*p == '.') ? '/' : *p;
+        out[k] = 0;
+    } else {
+        const char* map = NULL;
+        if      (!strcmp(n, "int"))     map = "I";
+        else if (!strcmp(n, "long"))    map = "J";
+        else if (!strcmp(n, "short"))   map = "S";
+        else if (!strcmp(n, "byte"))    map = "B";
+        else if (!strcmp(n, "double"))  map = "D";
+        else if (!strcmp(n, "float"))   map = "F";
+        else if (!strcmp(n, "boolean")) map = "Z";
+        else if (!strcmp(n, "char"))    map = "C";
+        else if (!strcmp(n, "void"))    map = "V";
+        if (map) {
+            strncpy(out, map, sz);
+        } else {
+            // 引用类型：L<内部名>;
+            size_t k = 1; out[0] = 'L';
+            for (const char* p = n; *p && k + 2 < sz; p++) out[k++] = (*p == '.') ? '/' : *p;
+            out[k++] = ';'; out[k] = 0;
+        }
+    }
+    (*env)->ReleaseStringUTFChars(env, nm, n);
+    (*env)->DeleteLocalRef(env, nm);
+    (*env)->DeleteLocalRef(env, classCls);
+}
+
+// 由返回类型 Class 得到类型字符（用于选择 Call*MethodA）：
+//   V/I/J/D/F/Z/C/B/L（L 代表任意引用类型；返回装箱对象后统一用 push_boxed_object）
+static char return_type_char_from_class(JNIEnv* env, jclass c) {
+    jclass classCls = (*env)->GetObjectClass(env, c);
+    jmethodID getName = (*env)->GetMethodID(env, classCls, "getName", "()Ljava/lang/String;");
+    jstring nm = (jstring)(*env)->CallObjectMethod(env, c, getName);
+    const char* n = (*env)->GetStringUTFChars(env, nm, NULL);
+    char r = 'L';
+    if      (!strcmp(n, "void"))    r = 'V';
+    else if (!strcmp(n, "int"))     r = 'I';
+    else if (!strcmp(n, "long"))    r = 'J';
+    else if (!strcmp(n, "double"))  r = 'D';
+    else if (!strcmp(n, "float"))   r = 'F';
+    else if (!strcmp(n, "short"))   r = 't';
+    else if (!strcmp(n, "byte"))    r = 'B';
+    else if (!strcmp(n, "boolean")) r = 'Z';
+    else if (!strcmp(n, "char"))    r = 'C';
+    (*env)->ReleaseStringUTFChars(env, nm, n);
+    (*env)->DeleteLocalRef(env, nm);
+    (*env)->DeleteLocalRef(env, classCls);
+    return r;
+}
+
 static int invoke_reflective(lua_State* L, JNIEnv* env, jclass cls, jobject obj,
                              const char* name, int wantStatic,
                              int startIdx, int nargs) {
@@ -426,13 +487,10 @@ static int invoke_reflective(lua_State* L, JNIEnv* env, jclass cls, jobject obj,
     jmethodID getName = (*env)->GetMethodID(env, methodCls, "getName", "()Ljava/lang/String;");
     jmethodID getParams = (*env)->GetMethodID(env, methodCls, "getParameterTypes", "()[Ljava/lang/Class;");
     jmethodID getMods = (*env)->GetMethodID(env, methodCls, "getModifiers", "()I");
+    jmethodID getDeclaring = (*env)->GetMethodID(env, methodCls, "getDeclaringClass", "()Ljava/lang/Class;");
+    jmethodID getReturnType = (*env)->GetMethodID(env, methodCls, "getReturnType", "()Ljava/lang/Class;");
     jclass modCls = (*env)->FindClass(env, "java/lang/reflect/Modifier");
     jmethodID isStaticM = (*env)->GetStaticMethodID(env, modCls, "isStatic", "(I)Z");
-
-    jclass objCls = (*env)->FindClass(env, "java/lang/Object");
-    jclass fcl = (*env)->FindClass(env, "java/lang/reflect/Method");
-    jmethodID invoke = (*env)->GetMethodID(env, fcl, "invoke",
-        "(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;");
 
     int pushed = -1;
     for (jsize i = 0; i < count; i++) {
@@ -471,31 +529,143 @@ static int invoke_reflective(lua_State* L, JNIEnv* env, jclass cls, jobject obj,
             continue;
         }
 
-        // 候选匹配：装箱参数并调用，抛异常则尝试下一个候选
+        // 在声明类（对 default 方法为接口）上构造完整 JNI 签名并查找方法 ID，
+        // 用 JNI 调用而非 Method.invoke —— 后者会因模块导出限制无法访问
+        // jdk.internal.* 实现类（如 HttpClientBuilderImpl）
+        jclass declaringCls = (jclass)(*env)->CallObjectMethod(env, m, getDeclaring);
+        jclass retCls = (jclass)(*env)->CallObjectMethod(env, m, getReturnType);
+        char sig[512] = "(";
+        size_t sigLen = 1;
+        for (int k = 0; k < nargs; k++) {
+            char ps[256];
+            jni_sig_from_class(env, pcs[k], ps, sizeof(ps));
+            size_t pl = strlen(ps);
+            if (sigLen + pl + 8 >= sizeof(sig)) { compat = 0; break; }
+            strcpy(sig + sigLen, ps); sigLen += pl;
+        }
+        char rs[256];
+        jni_sig_from_class(env, retCls, rs, sizeof(rs));
+        if (!compat || sigLen + strlen(rs) + 2 >= sizeof(sig)) {
+            if (compat) { /* sig too small */ }
+            for (jsize p = 0; p < pcount; p++) (*env)->DeleteLocalRef(env, pcs[p]);
+            free(pcs);
+            (*env)->DeleteLocalRef(env, retCls);
+            (*env)->DeleteLocalRef(env, declaringCls);
+            (*env)->DeleteLocalRef(env, m);
+            continue;
+        }
+        strcpy(sig + sigLen, ")");
+        sigLen += 1;
+        strcpy(sig + sigLen, rs);
+
+        jmethodID jm = wantStatic ?
+            (*env)->GetStaticMethodID(env, declaringCls, name, sig) :
+            (*env)->GetMethodID(env, declaringCls, name, sig);
+        if (!jm || (*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            for (jsize p = 0; p < pcount; p++) (*env)->DeleteLocalRef(env, pcs[p]);
+            free(pcs);
+            (*env)->DeleteLocalRef(env, retCls);
+            (*env)->DeleteLocalRef(env, declaringCls);
+            (*env)->DeleteLocalRef(env, m);
+            continue;
+        }
+
+        // 装箱参数并调用
+        jclass objCls = (*env)->FindClass(env, "java/lang/Object");
         jobjectArray argsArr = (*env)->NewObjectArray(env, nargs, objCls, NULL);
         for (int k = 0; k < nargs; k++) {
             jobject boxed = box_arg_for_class(env, L, startIdx + k, pcs[k]);
             if (boxed) (*env)->SetObjectArrayElement(env, argsArr, k, boxed);
             (*env)->DeleteLocalRef(env, boxed);
         }
+        (*env)->DeleteLocalRef(env, objCls);
+
+        // 用 jvalue 数组封装参数（引用参数直接用局部引用）
+        jvalue argsArr2[nargs ? nargs : 1];
+        memset(argsArr2, 0, sizeof(jvalue) * (nargs ? nargs : 1));
+        char argIsRef[nargs ? nargs : 1]; // 记录该参数是否为引用类型，避免把基本类型的
+                                          // 联合成员误当成 jobject 释放
+        for (int k = 0; k < nargs; k++) {
+            jobject el = (*env)->GetObjectArrayElement(env, argsArr, k);
+            char ps[256];
+            jni_sig_from_class(env, pcs[k], ps, sizeof(ps));
+            argIsRef[k] = (ps[0] == 'L' || ps[0] == '[');
+            // 基本类型参数需要从装箱对象解包
+            switch (ps[0]) {
+                case 'I': argsArr2[k].i = (*env)->CallIntMethod(env, el, (*env)->GetMethodID(env, (*env)->GetObjectClass(env, el), "intValue", "()I")); break;
+                case 'J': argsArr2[k].j = (*env)->CallLongMethod(env, el, (*env)->GetMethodID(env, (*env)->GetObjectClass(env, el), "longValue", "()J")); break;
+                case 'D': argsArr2[k].d = (*env)->CallDoubleMethod(env, el, (*env)->GetMethodID(env, (*env)->GetObjectClass(env, el), "doubleValue", "()D")); break;
+                case 'F': argsArr2[k].f = (*env)->CallFloatMethod(env, el, (*env)->GetMethodID(env, (*env)->GetObjectClass(env, el), "floatValue", "()F")); break;
+                case 'Z': argsArr2[k].z = (*env)->CallBooleanMethod(env, el, (*env)->GetMethodID(env, (*env)->GetObjectClass(env, el), "booleanValue", "()Z")); break;
+                case 'B': argsArr2[k].b = (*env)->CallByteMethod(env, el, (*env)->GetMethodID(env, (*env)->GetObjectClass(env, el), "byteValue", "()B")); break;
+                case 'S': argsArr2[k].s = (*env)->CallShortMethod(env, el, (*env)->GetMethodID(env, (*env)->GetObjectClass(env, el), "shortValue", "()S")); break;
+                case 'C': argsArr2[k].c = (*env)->CallCharMethod(env, el, (*env)->GetMethodID(env, (*env)->GetObjectClass(env, el), "charValue", "()C")); break;
+                default:  argsArr2[k].l = (*env)->NewLocalRef(env, el); break;
+            }
+            (*env)->DeleteLocalRef(env, el);
+        }
+        (*env)->DeleteLocalRef(env, argsArr);
+
+        char rt = return_type_char_from_class(env, retCls);
+        jvalue result; memset(&result, 0, sizeof(result));
+        if (wantStatic) {
+            switch (rt) {
+                case 'V': (*env)->CallStaticVoidMethodA(env, declaringCls, jm, argsArr2); break;
+                case 'I': result.i = (*env)->CallStaticIntMethodA(env, declaringCls, jm, argsArr2); break;
+                case 'J': result.j = (*env)->CallStaticLongMethodA(env, declaringCls, jm, argsArr2); break;
+                case 'D': result.d = (*env)->CallStaticDoubleMethodA(env, declaringCls, jm, argsArr2); break;
+                case 'F': result.f = (*env)->CallStaticFloatMethodA(env, declaringCls, jm, argsArr2); break;
+                case 'Z': result.z = (*env)->CallStaticBooleanMethodA(env, declaringCls, jm, argsArr2); break;
+                case 'B': result.b = (*env)->CallStaticByteMethodA(env, declaringCls, jm, argsArr2); break;
+                case 't': result.s = (*env)->CallStaticShortMethodA(env, declaringCls, jm, argsArr2); break;
+                case 'C': result.c = (*env)->CallStaticCharMethodA(env, declaringCls, jm, argsArr2); break;
+                default:  result.l = (*env)->CallStaticObjectMethodA(env, declaringCls, jm, argsArr2); break;
+            }
+        } else {
+            switch (rt) {
+                case 'V': (*env)->CallVoidMethodA(env, obj, jm, argsArr2); break;
+                case 'I': result.i = (*env)->CallIntMethodA(env, obj, jm, argsArr2); break;
+                case 'J': result.j = (*env)->CallLongMethodA(env, obj, jm, argsArr2); break;
+                case 'D': result.d = (*env)->CallDoubleMethodA(env, obj, jm, argsArr2); break;
+                case 'F': result.f = (*env)->CallFloatMethodA(env, obj, jm, argsArr2); break;
+                case 'Z': result.z = (*env)->CallBooleanMethodA(env, obj, jm, argsArr2); break;
+                case 'B': result.b = (*env)->CallByteMethodA(env, obj, jm, argsArr2); break;
+                case 't': result.s = (*env)->CallShortMethodA(env, obj, jm, argsArr2); break;
+                case 'C': result.c = (*env)->CallCharMethodA(env, obj, jm, argsArr2); break;
+                default:  result.l = (*env)->CallObjectMethodA(env, obj, jm, argsArr2); break;
+            }
+        }
+
+        for (int k = 0; k < nargs; k++) {
+            if (argIsRef[k] && argsArr2[k].l) (*env)->DeleteLocalRef(env, argsArr2[k].l);
+        }
         for (jsize p = 0; p < pcount; p++) (*env)->DeleteLocalRef(env, pcs[p]);
         free(pcs);
+        (*env)->DeleteLocalRef(env, retCls);
+        (*env)->DeleteLocalRef(env, declaringCls);
+        (*env)->DeleteLocalRef(env, m);
 
-        jobject result = (*env)->CallObjectMethod(env, m, invoke, wantStatic ? NULL : obj, argsArr);
-        (*env)->DeleteLocalRef(env, argsArr);
         if ((*env)->ExceptionCheck(env)) {
             (*env)->ExceptionClear(env);
-            (*env)->DeleteLocalRef(env, m);
             continue; // 尝试下一个重载
         }
-        pushed = push_boxed_object(L, env, result);
-        (*env)->DeleteLocalRef(env, result);
-        (*env)->DeleteLocalRef(env, m);
+
+        switch (rt) {
+            case 'V': lua_pushnil(L); pushed = 1; break;
+            case 'I': lua_pushinteger(L, result.i); pushed = 1; break;
+            case 'J': lua_pushinteger(L, (lua_Integer)result.j); pushed = 1; break;
+            case 'D': lua_pushnumber(L, result.d); pushed = 1; break;
+            case 'F': lua_pushnumber(L, result.f); pushed = 1; break;
+            case 'Z': lua_pushboolean(L, result.z); pushed = 1; break;
+            case 'B': lua_pushinteger(L, result.b); pushed = 1; break;
+            case 't': lua_pushinteger(L, result.s); pushed = 1; break;
+            case 'C': { char buf[1] = { (char)result.c }; lua_pushlstring(L, buf, 1); pushed = 1; break; }
+            default:  push_boxed_object(L, env, result.l); if (result.l) (*env)->DeleteLocalRef(env, result.l); pushed = 1; break;
+        }
         break;
     }
 
-    (*env)->DeleteLocalRef(env, objCls);
-    (*env)->DeleteLocalRef(env, fcl);
     (*env)->DeleteLocalRef(env, modCls);
     (*env)->DeleteLocalRef(env, methodCls);
     (*env)->DeleteLocalRef(env, classCls);

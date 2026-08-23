@@ -35,12 +35,12 @@ t("test('hello')==true / test('world')==false", function()
     assert(proxy:test("world") == false)
 end)
 
-print("=== 3. Function（String 返回值，经 toString 校验） ===")
+print("=== 3. Function（String 返回值） ===")
 t("apply('world') 拼接字符串", function()
     local proxy = java.createProxy({"java.util.function.Function"},
         { apply = function(self, s) return "hello " .. s end })
     local r = proxy:apply("world")
-    assert(r:toString() == "hello world")
+    assert(r == "hello world")
 end)
 
 print("=== 4. Consumer（void 方法 + 闭包捕获） ===")

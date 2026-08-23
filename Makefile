@@ -54,8 +54,12 @@ all: $(BUILD_DIR)/luajava.$(LIB_EXT) | $(OUT_DIR)
 	jar cf luajava.jar -C $(OUT_DIR) .
 	@echo "Build complete. Run './luaj.sh' to start."
 
+# ---------- 收集所有 C 源码（用于 .so 依赖检查） ----------
+NATIVE_SRCS := $(shell find native -name "*.c")
+LUA_SRCS := $(shell find lua -name "*.c" ! -name "luac.c")
+
 # ---------- 构建 C 库 ----------
-$(BUILD_DIR)/luajava.$(LIB_EXT):
+$(BUILD_DIR)/luajava.$(LIB_EXT): $(NATIVE_SRCS) $(LUA_SRCS) CMakeLists.txt
 	@mkdir -p $(BUILD_DIR)
 	@cd $(BUILD_DIR) && cmake -DPROJECT_VERSION=$(PROJECT_VERSION) .. && $(MAKE)
 
