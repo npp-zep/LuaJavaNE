@@ -264,23 +264,115 @@ static char java_class_to_type_char(JNIEnv* env, jclass cls) {
     return isStr ? 'S' : 'L';
 }
 
-// Lua 参数与 Java 参数类型是否兼容
-static int lua_compat_with_class(JNIEnv* env, lua_State* L, int idx, jclass pcls) {
-    char t = java_class_to_type_char(env, pcls);
+// 重载解析打分：返回候选形参类 pc 与 Lua 值 idx 的匹配分值（越小越优），-1 表示不兼容。
+// 区分精确基本类型、装箱、以及"引用形参能否承接 Lua 装箱值"：整数装箱为 Integer 时，
+// 祖先/接口可承接（Object/Number），而 StringBuffer/StringBuilder 等无关引用类判为不兼容，
+// 杜绝 append(5) 错配到 append(StringBuffer) 造成 JVM SIGSEGV。
+static int lua_score_with_class(JNIEnv* env, lua_State* L, int idx, jclass pc) {
+    char t = java_class_to_type_char(env, pc);
     int lt = lua_type(L, idx);
     switch (t) {
-        case 'I': case 'J': case 'D': case 'F': case 't': case 'B':
-            return lt == LUA_TNUMBER;
-        case 'Z':
-            return lt == LUA_TBOOLEAN;
-        case 'C':
-            return lt == LUA_TSTRING || lt == LUA_TNUMBER;
-        case 'S':
-            return lt == LUA_TSTRING;
-        default: // 'L' 引用类型：userdata / 任意可装箱标量
-            return lt == LUA_TUSERDATA || lt == LUA_TSTRING ||
-                   lt == LUA_TNUMBER || lt == LUA_TBOOLEAN;
+        case 'Z': return lt == LUA_TBOOLEAN ? 0 : -1;
+        case 'S': return lt == LUA_TSTRING ? 0 : -1;
+        case 'I': case 'J': case 't': case 'B': case 'F': case 'D': case 'C': {
+            if (lt != LUA_TNUMBER) return -1;
+            if (!lua_isinteger(L, idx)) {
+                // 小数：double 精确，其次 float；int/long/short/byte/char 视为弱兼容
+                return t == 'D' ? 0 : (t == 'F' ? 1 : 6);
+            }
+            lua_Integer n = lua_tointeger(L, idx);
+            int fitsI   = (n >= -2147483648LL && n <= 2147483647LL);
+            int fitsS   = (n >= -32768LL && n <= 32767LL);
+            int fitsB   = (n >= -128LL && n <= 127LL);
+            int fitsC   = (n >= 0LL && n <= 65535LL);
+            switch (t) {
+                case 'I': return fitsI ? 0 : -1;   // 不越界精确 int；越界则不可能匹配 append(int)
+                case 'J': return fitsI ? 2 : 0;    // 大整数只能落到 long（0 最佳）
+                case 't': return fitsS ? 3 : -1;
+                case 'B': return fitsB ? 4 : -1;
+                case 'F': return 5;
+                case 'D': return 6;
+                default:  return fitsC ? 7 : -1;    /* char */
+            }
+        }
+        default: { // 'L' / '[' 引用类型
+            if (lt == LUA_TUSERDATA) {
+                JavaUserdata* ud = (JavaUserdata*)luaL_testudata(L, idx, JAVAOBJECT_META);
+                if (ud && (*env)->IsInstanceOf(env, ud->obj, pc)) return 0;
+                JavaArray* arr = (JavaArray*)luaL_testudata(L, idx, JAVAARRAY_META);
+                if (arr && (*env)->IsInstanceOf(env, arr->arrayObj, pc)) return 0;
+                return -1;
+            }
+            if (lt != LUA_TNUMBER && lt != LUA_TSTRING && lt != LUA_TBOOLEAN) return -1;
+            jclass boxCls = NULL;
+            if (lt == LUA_TNUMBER) {
+                if (lua_isinteger(L, idx)) {
+                    lua_Integer n = lua_tointeger(L, idx);
+                    boxCls = (n >= -2147483648LL && n <= 2147483647LL)
+                        ? (*env)->FindClass(env, "java/lang/Integer")
+                        : (*env)->FindClass(env, "java/lang/Long");
+                } else boxCls = (*env)->FindClass(env, "java/lang/Double");
+            } else if (lt == LUA_TSTRING) boxCls = (*env)->FindClass(env, "java/lang/String");
+            else boxCls = (*env)->FindClass(env, "java/lang/Boolean");
+            if (!boxCls) return -1;
+
+            jclass classCls = (*env)->FindClass(env, "java/lang/Class");
+            jmethodID assignFrom = classCls
+                ? (*env)->GetMethodID(env, classCls, "isAssignableFrom", "(Ljava/lang/Class;)Z")
+                : NULL;
+            int result = -1;
+            if (assignFrom && (*env)->CallBooleanMethod(env, pc, assignFrom, boxCls)) {
+                jclass objCls = (*env)->FindClass(env, "java/lang/Object");
+                if ((*env)->IsSameObject(env, pc, boxCls)) result = 1;        // 精确包装类
+                else if ((*env)->IsSameObject(env, pc, objCls)) result = 4;   // Object
+                else result = 2;                                               // Number/接口等可承接
+                (*env)->DeleteLocalRef(env, objCls);
+            }
+            if (classCls) (*env)->DeleteLocalRef(env, classCls);
+            (*env)->DeleteLocalRef(env, boxCls);
+            return result;
+        }
     }
+}
+
+// 按 Lua 值的实际类型把其装箱成 Java 引用对象（目标形参为引用类型 Object/接口/包装类时使用）。
+// 返回局部引用，调用方必须 DeleteLocalRef；无法装箱（如 nil）返回 NULL。
+static jobject box_arg_object(JNIEnv* env, lua_State* L, int idx) {
+    int lt = lua_type(L, idx);
+    if (lt == LUA_TUSERDATA) {
+        JavaUserdata* ud = (JavaUserdata*)luaL_testudata(L, idx, JAVAOBJECT_META);
+        if (ud) return (*env)->NewLocalRef(env, ud->obj);
+        JavaArray* arr = (JavaArray*)luaL_testudata(L, idx, JAVAARRAY_META);
+        if (arr) return (*env)->NewLocalRef(env, arr->arrayObj);
+        return NULL;
+    }
+    if (lt == LUA_TSTRING) {
+        size_t len; const char* s = luaL_checklstring(L, idx, &len);
+        return (*env)->NewStringUTF(env, s);
+    }
+    if (lt == LUA_TNUMBER) {
+        jclass boxCls; jmethodID valueOf;
+        if (lua_isinteger(L, idx)) {
+            lua_Integer n = lua_tointeger(L, idx);
+            if (n >= -2147483648LL && n <= 2147483647LL) {
+                boxCls = (*env)->FindClass(env, "java/lang/Integer");
+                valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(I)Ljava/lang/Integer;");
+                return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jint)n);
+            }
+            boxCls = (*env)->FindClass(env, "java/lang/Long");
+            valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(J)Ljava/lang/Long;");
+            return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jlong)n);
+        }
+        boxCls = (*env)->FindClass(env, "java/lang/Double");
+        valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(D)Ljava/lang/Double;");
+        return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jdouble)lua_tonumber(L, idx));
+    }
+    if (lt == LUA_TBOOLEAN) {
+        jclass boxCls = (*env)->FindClass(env, "java/lang/Boolean");
+        jmethodID valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(Z)Ljava/lang/Boolean;");
+        return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jboolean)lua_toboolean(L, idx));
+    }
+    return NULL;
 }
 
 // 按目标参数类型把 Lua 值装箱成 Java 对象，返回局部引用（调用方负责 DeleteLocalRef）
@@ -329,43 +421,10 @@ static jobject box_arg_for_class(JNIEnv* env, lua_State* L, int idx, jclass pcls
             size_t len; const char* s = luaL_checklstring(L, idx, &len);
             return (*env)->NewStringUTF(env, s);
         }
-        default: { // 'L' 引用类型
-            if (lt == LUA_TUSERDATA) {
-                JavaUserdata* ud = (JavaUserdata*)luaL_testudata(L, idx, JAVAOBJECT_META);
-                if (ud) return (*env)->NewLocalRef(env, ud->obj);
-                JavaArray* arr = (JavaArray*)luaL_testudata(L, idx, JAVAARRAY_META);
-                if (arr) return (*env)->NewLocalRef(env, arr->arrayObj);
-                return NULL;
-            }
-            if (lt == LUA_TSTRING) {
-                size_t len; const char* s = luaL_checklstring(L, idx, &len);
-                return (*env)->NewStringUTF(env, s);
-            }
-            if (lt == LUA_TNUMBER) {
-                if (lua_isinteger(L, idx)) {
-                    lua_Integer n = lua_tointeger(L, idx);
-                    if (n >= -2147483648LL && n <= 2147483647LL) {
-                        boxCls = (*env)->FindClass(env, "java/lang/Integer");
-                        valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(I)Ljava/lang/Integer;");
-                        return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jint)n);
-                    }
-                    boxCls = (*env)->FindClass(env, "java/lang/Long");
-                    valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(J)Ljava/lang/Long;");
-                    return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jlong)n);
-                }
-                boxCls = (*env)->FindClass(env, "java/lang/Double");
-                valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(D)Ljava/lang/Double;");
-                return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jdouble)lua_tonumber(L, idx));
-            }
-            if (lt == LUA_TBOOLEAN) {
-                boxCls = (*env)->FindClass(env, "java/lang/Boolean");
-                valueOf = (*env)->GetStaticMethodID(env, boxCls, "valueOf", "(Z)Ljava/lang/Boolean;");
-                return (*env)->CallStaticObjectMethod(env, boxCls, valueOf, (jboolean)lua_toboolean(L, idx));
-            }
-            return NULL;
+        default: // 'L' 引用类型
+            return box_arg_object(env, L, idx);
         }
     }
-}
 
 // 把 Java 对象（含装箱对象）转换为 Lua 值压栈，返回压入个数
 static int push_boxed_object(lua_State* L, JNIEnv* env, jobject val) {
@@ -474,124 +533,136 @@ static char return_type_char_from_class(JNIEnv* env, jclass c) {
     return r;
 }
 
-static int invoke_reflective(lua_State* L, JNIEnv* env, jclass cls, jobject obj,
-                             const char* name, int wantStatic,
-                             int startIdx, int nargs) {
+// 反射重载解析核心：在 public 方法（或构造器）中按 lua_score_with_class 打分选出
+// 最匹配的一个，再装箱参数并调用。isCtor=1 时遍历 getConstructors()，name/wantStatic 忽略，
+// 结果走 NewObjectA 包成 Java 对象；isCtor=0 时遍历 getMethods() 并支持静态/实例与返回类型。
+// 成功返回 1（结果已压栈），失败返回 -1。best 用全局引用保活，跨循环不失效。
+static int invoke_reflective_core(lua_State* L, JNIEnv* env, jclass cls, jobject obj,
+                                  const char* name, int wantStatic, int isCtor,
+                                  int startIdx, int nargs) {
     jclass classCls = (*env)->FindClass(env, "java/lang/Class");
-    jmethodID getMethods = (*env)->GetMethodID(env, classCls, "getMethods", "()[Ljava/lang/reflect/Method;");
-    jobjectArray methods = (jobjectArray)(*env)->CallObjectMethod(env, cls, getMethods);
-    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); (*env)->DeleteLocalRef(env, classCls); return -1; }
-    jsize count = (*env)->GetArrayLength(env, methods);
+    jmethodID getExecs = isCtor
+        ? (*env)->GetMethodID(env, classCls, "getConstructors", "()[Ljava/lang/reflect/Constructor;")
+        : (*env)->GetMethodID(env, classCls, "getMethods", "()[Ljava/lang/reflect/Method;");
+    jobjectArray execs = (jobjectArray)(*env)->CallObjectMethod(env, cls, getExecs);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, classCls);
+        return -1;
+    }
+    jsize count = (*env)->GetArrayLength(env, execs);
 
-    jclass methodCls = (*env)->FindClass(env, "java/lang/reflect/Method");
-    jmethodID getName = (*env)->GetMethodID(env, methodCls, "getName", "()Ljava/lang/String;");
-    jmethodID getParams = (*env)->GetMethodID(env, methodCls, "getParameterTypes", "()[Ljava/lang/Class;");
-    jmethodID getMods = (*env)->GetMethodID(env, methodCls, "getModifiers", "()I");
-    jmethodID getDeclaring = (*env)->GetMethodID(env, methodCls, "getDeclaringClass", "()Ljava/lang/Class;");
-    jmethodID getReturnType = (*env)->GetMethodID(env, methodCls, "getReturnType", "()Ljava/lang/Class;");
+    jclass execCls = isCtor
+        ? (*env)->FindClass(env, "java/lang/reflect/Constructor")
+        : (*env)->FindClass(env, "java/lang/reflect/Method");
+    jmethodID getName      = isCtor ? NULL : (*env)->GetMethodID(env, execCls, "getName", "()Ljava/lang/String;");
+    jmethodID getParams    = (*env)->GetMethodID(env, execCls, "getParameterTypes", "()[Ljava/lang/Class;");
+    jmethodID getMods      = isCtor ? NULL : (*env)->GetMethodID(env, execCls, "getModifiers", "()I");
+    jmethodID getDeclaring = (*env)->GetMethodID(env, execCls, "getDeclaringClass", "()Ljava/lang/Class;");
+    jmethodID getReturnType = isCtor ? NULL : (*env)->GetMethodID(env, execCls, "getReturnType", "()Ljava/lang/Class;");
     jclass modCls = (*env)->FindClass(env, "java/lang/reflect/Modifier");
     jmethodID isStaticM = (*env)->GetStaticMethodID(env, modCls, "isStatic", "(I)Z");
 
-    int pushed = -1;
+    // ---- Phase 1: 打分选最佳候选 ----
+    jobject best = NULL;          // 全局引用：方法/构造器对象
+    jsize bestPcount = 0;
+    int bestTotal = INT_MAX;
     for (jsize i = 0; i < count; i++) {
-        jobject m = (*env)->GetObjectArrayElement(env, methods, i);
-        jstring mn = (jstring)(*env)->CallObjectMethod(env, m, getName);
-        const char* mnc = (*env)->GetStringUTFChars(env, mn, NULL);
-        int nameMatch = (strcmp(mnc, name) == 0);
-        (*env)->ReleaseStringUTFChars(env, mn, mnc);
-        (*env)->DeleteLocalRef(env, mn);
-        if (!nameMatch) { (*env)->DeleteLocalRef(env, m); continue; }
-
-        jint mods = (*env)->CallIntMethod(env, m, getMods);
-        jboolean mStatic = (*env)->CallStaticBooleanMethod(env, modCls, isStaticM, mods);
-        if ((jboolean)wantStatic != mStatic) { (*env)->DeleteLocalRef(env, m); continue; }
-
+        jobject m = (*env)->GetObjectArrayElement(env, execs, i);
+        int ok = 1;
+        if (!isCtor) {
+            jstring mn = (jstring)(*env)->CallObjectMethod(env, m, getName);
+            const char* mnc = (*env)->GetStringUTFChars(env, mn, NULL);
+            ok = (strcmp(mnc, name) == 0);
+            (*env)->ReleaseStringUTFChars(env, mn, mnc);
+            (*env)->DeleteLocalRef(env, mn);
+            if (ok) {
+                jboolean mStatic = (*env)->CallStaticBooleanMethod(env, modCls, isStaticM,
+                     (*env)->CallIntMethod(env, m, getMods));
+                if ((jboolean)wantStatic != mStatic) ok = 0;
+            }
+        }
         jobjectArray ptypes = (jobjectArray)(*env)->CallObjectMethod(env, m, getParams);
         jsize pcount = (*env)->GetArrayLength(env, ptypes);
-        if (pcount != (jsize)nargs) {
-            (*env)->DeleteLocalRef(env, ptypes);
-            (*env)->DeleteLocalRef(env, m);
-            continue;
-        }
-
-        int compat = 1;
-        jclass* pcs = (jclass*)calloc(nargs > 0 ? (size_t)nargs : 1, sizeof(jclass));
-        for (jsize p = 0; p < pcount; p++) {
-            jclass pc = (jclass)(*env)->GetObjectArrayElement(env, ptypes, p);
-            pcs[p] = pc;
-            if (!lua_compat_with_class(env, L, startIdx + (int)p, pc)) { compat = 0; break; }
+        if (ok && pcount == (jsize)nargs) {
+            int total = 0;
+            for (jsize p = 0; p < pcount; p++) {
+                jclass pc = (jclass)(*env)->GetObjectArrayElement(env, ptypes, p);
+                int s = lua_score_with_class(env, L, startIdx + (int)p, pc);
+                (*env)->DeleteLocalRef(env, pc);
+                if (s < 0) { total = -1; break; }
+                total += s;
+            }
+            if (total >= 0 && total < bestTotal) {
+                bestTotal = total;
+                bestPcount = pcount;
+                if (best) (*env)->DeleteGlobalRef(env, best);
+                best = (*env)->NewGlobalRef(env, m);
+            }
         }
         (*env)->DeleteLocalRef(env, ptypes);
-        if (!compat) {
-            for (jsize p = 0; p < pcount; p++) (*env)->DeleteLocalRef(env, pcs[p]);
-            free(pcs);
-            (*env)->DeleteLocalRef(env, m);
-            continue;
-        }
+        (*env)->DeleteLocalRef(env, m);
+    }
+    (*env)->DeleteLocalRef(env, execs);
 
-        // 在声明类（对 default 方法为接口）上构造完整 JNI 签名并查找方法 ID，
-        // 用 JNI 调用而非 Method.invoke —— 后者会因模块导出限制无法访问
-        // jdk.internal.* 实现类（如 HttpClientBuilderImpl）
-        jclass declaringCls = (jclass)(*env)->CallObjectMethod(env, m, getDeclaring);
-        jclass retCls = (jclass)(*env)->CallObjectMethod(env, m, getReturnType);
-        char sig[512] = "(";
-        size_t sigLen = 1;
-        for (int k = 0; k < nargs; k++) {
-            char ps[256];
-            jni_sig_from_class(env, pcs[k], ps, sizeof(ps));
-            size_t pl = strlen(ps);
-            if (sigLen + pl + 8 >= sizeof(sig)) { compat = 0; break; }
-            strcpy(sig + sigLen, ps); sigLen += pl;
-        }
-        char rs[256];
-        jni_sig_from_class(env, retCls, rs, sizeof(rs));
-        if (!compat || sigLen + strlen(rs) + 2 >= sizeof(sig)) {
-            if (compat) { /* sig too small */ }
-            for (jsize p = 0; p < pcount; p++) (*env)->DeleteLocalRef(env, pcs[p]);
-            free(pcs);
-            (*env)->DeleteLocalRef(env, retCls);
-            (*env)->DeleteLocalRef(env, declaringCls);
-            (*env)->DeleteLocalRef(env, m);
-            continue;
-        }
-        strcpy(sig + sigLen, ")");
-        sigLen += 1;
-        strcpy(sig + sigLen, rs);
+    if (!best) {
+        (*env)->DeleteLocalRef(env, modCls);
+        (*env)->DeleteLocalRef(env, execCls);
+        (*env)->DeleteLocalRef(env, classCls);
+        return -1;
+    }
 
-        jmethodID jm = wantStatic ?
-            (*env)->GetStaticMethodID(env, declaringCls, name, sig) :
-            (*env)->GetMethodID(env, declaringCls, name, sig);
-        if (!jm || (*env)->ExceptionCheck(env)) {
-            (*env)->ExceptionClear(env);
-            for (jsize p = 0; p < pcount; p++) (*env)->DeleteLocalRef(env, pcs[p]);
-            free(pcs);
-            (*env)->DeleteLocalRef(env, retCls);
-            (*env)->DeleteLocalRef(env, declaringCls);
-            (*env)->DeleteLocalRef(env, m);
-            continue;
-        }
+    // ---- Phase 2: 构造 JNI 签名、装箱参数并调用 ----
+    jobjectArray ptypes = (jobjectArray)(*env)->CallObjectMethod(env, best, getParams);
+    jclass* pcs = (jclass*)calloc(bestPcount > 0 ? (size_t)bestPcount : 1, sizeof(jclass));
+    for (jsize p = 0; p < bestPcount; p++)
+        pcs[p] = (jclass)(*env)->GetObjectArrayElement(env, ptypes, p);
+    (*env)->DeleteLocalRef(env, ptypes);
 
-        // 装箱参数并调用
-        jclass objCls = (*env)->FindClass(env, "java/lang/Object");
-        jobjectArray argsArr = (*env)->NewObjectArray(env, nargs, objCls, NULL);
-        for (int k = 0; k < nargs; k++) {
-            jobject boxed = box_arg_for_class(env, L, startIdx + k, pcs[k]);
-            if (boxed) (*env)->SetObjectArrayElement(env, argsArr, k, boxed);
+    jclass declaringCls = isCtor ? (*env)->NewLocalRef(env, cls)
+        : (jclass)(*env)->CallObjectMethod(env, best, getDeclaring);
+    jclass retCls = isCtor ? NULL
+        : (jclass)(*env)->CallObjectMethod(env, best, getReturnType);
+
+    char sig[512] = "("; size_t sigLen = 1;
+    int tooBig = 0;
+    for (jsize k = 0; k < bestPcount; k++) {
+        char ps[256]; jni_sig_from_class(env, pcs[k], ps, sizeof(ps));
+        size_t pl = strlen(ps);
+        if (sigLen + pl + 8 >= sizeof(sig)) { tooBig = 1; break; }
+        strcpy(sig + sigLen, ps); sigLen += pl;
+    }
+    if (isCtor) {
+        strcpy(sig + sigLen, ")V"); sigLen += 3;
+    } else {
+        char rs[256]; jni_sig_from_class(env, retCls, rs, sizeof(rs));
+        if (sigLen + strlen(rs) + 2 < sizeof(sig)) {
+            strcpy(sig + sigLen, ")"); sigLen += 1;
+            strcpy(sig + sigLen, rs);
+        } else tooBig = 1;
+    }
+    jmethodID jm = NULL;
+    if (!tooBig) {
+        jm = isCtor ? (*env)->GetMethodID(env, cls, "<init>", sig)
+            : (wantStatic ? (*env)->GetStaticMethodID(env, declaringCls, name, sig)
+                          : (*env)->GetMethodID(env, declaringCls, name, sig));
+    }
+    int pushed = -1;
+    if (jm && !(*env)->ExceptionCheck(env)) {
+        jclass objArrCls = (*env)->FindClass(env, "java/lang/Object");
+        jobjectArray argsArr = (*env)->NewObjectArray(env, bestPcount, objArrCls, NULL);
+        for (jsize k = 0; k < bestPcount; k++) {
+            jobject boxed = box_arg_for_class(env, L, startIdx + (int)k, pcs[k]);
+            if (boxed) (*env)->SetObjectArrayElement(env, argsArr, (jsize)k, boxed);
             (*env)->DeleteLocalRef(env, boxed);
         }
-        (*env)->DeleteLocalRef(env, objCls);
-
-        // 用 jvalue 数组封装参数（引用参数直接用局部引用）
-        jvalue argsArr2[nargs ? nargs : 1];
-        memset(argsArr2, 0, sizeof(jvalue) * (nargs ? nargs : 1));
-        char argIsRef[nargs ? nargs : 1]; // 记录该参数是否为引用类型，避免把基本类型的
-                                          // 联合成员误当成 jobject 释放
-        for (int k = 0; k < nargs; k++) {
+        jvalue argsArr2[bestPcount ? bestPcount : 1];
+        memset(argsArr2, 0, sizeof(jvalue) * (bestPcount ? bestPcount : 1));
+        char argIsRef[bestPcount ? bestPcount : 1]; // 基本类型成员不作为 jobject 释放
+        for (jsize k = 0; k < bestPcount; k++) {
             jobject el = (*env)->GetObjectArrayElement(env, argsArr, k);
-            char ps[256];
-            jni_sig_from_class(env, pcs[k], ps, sizeof(ps));
+            char ps[256]; jni_sig_from_class(env, pcs[k], ps, sizeof(ps));
             argIsRef[k] = (ps[0] == 'L' || ps[0] == '[');
-            // 基本类型参数需要从装箱对象解包
             switch (ps[0]) {
                 case 'I': argsArr2[k].i = (*env)->CallIntMethod(env, el, (*env)->GetMethodID(env, (*env)->GetObjectClass(env, el), "intValue", "()I")); break;
                 case 'J': argsArr2[k].j = (*env)->CallLongMethod(env, el, (*env)->GetMethodID(env, (*env)->GetObjectClass(env, el), "longValue", "()J")); break;
@@ -606,71 +677,86 @@ static int invoke_reflective(lua_State* L, JNIEnv* env, jclass cls, jobject obj,
             (*env)->DeleteLocalRef(env, el);
         }
         (*env)->DeleteLocalRef(env, argsArr);
+        (*env)->DeleteLocalRef(env, objArrCls);
 
-        char rt = return_type_char_from_class(env, retCls);
-        jvalue result; memset(&result, 0, sizeof(result));
-        if (wantStatic) {
-            switch (rt) {
-                case 'V': (*env)->CallStaticVoidMethodA(env, declaringCls, jm, argsArr2); break;
-                case 'I': result.i = (*env)->CallStaticIntMethodA(env, declaringCls, jm, argsArr2); break;
-                case 'J': result.j = (*env)->CallStaticLongMethodA(env, declaringCls, jm, argsArr2); break;
-                case 'D': result.d = (*env)->CallStaticDoubleMethodA(env, declaringCls, jm, argsArr2); break;
-                case 'F': result.f = (*env)->CallStaticFloatMethodA(env, declaringCls, jm, argsArr2); break;
-                case 'Z': result.z = (*env)->CallStaticBooleanMethodA(env, declaringCls, jm, argsArr2); break;
-                case 'B': result.b = (*env)->CallStaticByteMethodA(env, declaringCls, jm, argsArr2); break;
-                case 't': result.s = (*env)->CallStaticShortMethodA(env, declaringCls, jm, argsArr2); break;
-                case 'C': result.c = (*env)->CallStaticCharMethodA(env, declaringCls, jm, argsArr2); break;
-                default:  result.l = (*env)->CallStaticObjectMethodA(env, declaringCls, jm, argsArr2); break;
-            }
+        if (isCtor) {
+            jobject o = (*env)->NewObjectA(env, cls, jm, argsArr2);
+            if (o && !(*env)->ExceptionCheck(env)) { new_java_object_ud(L, o); pushed = 1; }
+            if (o) (*env)->DeleteLocalRef(env, o);
         } else {
-            switch (rt) {
-                case 'V': (*env)->CallVoidMethodA(env, obj, jm, argsArr2); break;
-                case 'I': result.i = (*env)->CallIntMethodA(env, obj, jm, argsArr2); break;
-                case 'J': result.j = (*env)->CallLongMethodA(env, obj, jm, argsArr2); break;
-                case 'D': result.d = (*env)->CallDoubleMethodA(env, obj, jm, argsArr2); break;
-                case 'F': result.f = (*env)->CallFloatMethodA(env, obj, jm, argsArr2); break;
-                case 'Z': result.z = (*env)->CallBooleanMethodA(env, obj, jm, argsArr2); break;
-                case 'B': result.b = (*env)->CallByteMethodA(env, obj, jm, argsArr2); break;
-                case 't': result.s = (*env)->CallShortMethodA(env, obj, jm, argsArr2); break;
-                case 'C': result.c = (*env)->CallCharMethodA(env, obj, jm, argsArr2); break;
-                default:  result.l = (*env)->CallObjectMethodA(env, obj, jm, argsArr2); break;
+            char rt = return_type_char_from_class(env, retCls);
+            jvalue result; memset(&result, 0, sizeof(result));
+            if (wantStatic) {
+                switch (rt) {
+                    case 'V': (*env)->CallStaticVoidMethodA(env, declaringCls, jm, argsArr2); break;
+                    case 'I': result.i = (*env)->CallStaticIntMethodA(env, declaringCls, jm, argsArr2); break;
+                    case 'J': result.j = (*env)->CallStaticLongMethodA(env, declaringCls, jm, argsArr2); break;
+                    case 'D': result.d = (*env)->CallStaticDoubleMethodA(env, declaringCls, jm, argsArr2); break;
+                    case 'F': result.f = (*env)->CallStaticFloatMethodA(env, declaringCls, jm, argsArr2); break;
+                    case 'Z': result.z = (*env)->CallStaticBooleanMethodA(env, declaringCls, jm, argsArr2); break;
+                    case 'B': result.b = (*env)->CallStaticByteMethodA(env, declaringCls, jm, argsArr2); break;
+                    case 't': result.s = (*env)->CallStaticShortMethodA(env, declaringCls, jm, argsArr2); break;
+                    case 'C': result.c = (*env)->CallStaticCharMethodA(env, declaringCls, jm, argsArr2); break;
+                    default:  result.l = (*env)->CallStaticObjectMethodA(env, declaringCls, jm, argsArr2); break;
+                }
+            } else {
+                switch (rt) {
+                    case 'V': (*env)->CallVoidMethodA(env, obj, jm, argsArr2); break;
+                    case 'I': result.i = (*env)->CallIntMethodA(env, obj, jm, argsArr2); break;
+                    case 'J': result.j = (*env)->CallLongMethodA(env, obj, jm, argsArr2); break;
+                    case 'D': result.d = (*env)->CallDoubleMethodA(env, obj, jm, argsArr2); break;
+                    case 'F': result.f = (*env)->CallFloatMethodA(env, obj, jm, argsArr2); break;
+                    case 'Z': result.z = (*env)->CallBooleanMethodA(env, obj, jm, argsArr2); break;
+                    case 'B': result.b = (*env)->CallByteMethodA(env, obj, jm, argsArr2); break;
+                    case 't': result.s = (*env)->CallShortMethodA(env, obj, jm, argsArr2); break;
+                    case 'C': result.c = (*env)->CallCharMethodA(env, obj, jm, argsArr2); break;
+                    default:  result.l = (*env)->CallObjectMethodA(env, obj, jm, argsArr2); break;
+                }
+            }
+            if (!(*env)->ExceptionCheck(env)) {
+                switch (rt) {
+                    case 'V': lua_pushnil(L); pushed = 1; break;
+                    case 'I': lua_pushinteger(L, result.i); pushed = 1; break;
+                    case 'J': lua_pushinteger(L, (lua_Integer)result.j); pushed = 1; break;
+                    case 'D': lua_pushnumber(L, result.d); pushed = 1; break;
+                    case 'F': lua_pushnumber(L, result.f); pushed = 1; break;
+                    case 'Z': lua_pushboolean(L, result.z); pushed = 1; break;
+                    case 'B': lua_pushinteger(L, result.b); pushed = 1; break;
+                    case 't': lua_pushinteger(L, result.s); pushed = 1; break;
+                    case 'C': { char bf[1] = { (char)result.c }; lua_pushlstring(L, bf, 1); pushed = 1; break; }
+                    default:  push_boxed_object(L, env, result.l); if (result.l) (*env)->DeleteLocalRef(env, result.l); pushed = 1; break;
+                }
             }
         }
-
-        for (int k = 0; k < nargs; k++) {
+        // 释放引用类型参数本地引用
+        for (jsize k = 0; k < bestPcount; k++)
             if (argIsRef[k] && argsArr2[k].l) (*env)->DeleteLocalRef(env, argsArr2[k].l);
-        }
-        for (jsize p = 0; p < pcount; p++) (*env)->DeleteLocalRef(env, pcs[p]);
-        free(pcs);
-        (*env)->DeleteLocalRef(env, retCls);
-        (*env)->DeleteLocalRef(env, declaringCls);
-        (*env)->DeleteLocalRef(env, m);
-
-        if ((*env)->ExceptionCheck(env)) {
-            (*env)->ExceptionClear(env);
-            continue; // 尝试下一个重载
-        }
-
-        switch (rt) {
-            case 'V': lua_pushnil(L); pushed = 1; break;
-            case 'I': lua_pushinteger(L, result.i); pushed = 1; break;
-            case 'J': lua_pushinteger(L, (lua_Integer)result.j); pushed = 1; break;
-            case 'D': lua_pushnumber(L, result.d); pushed = 1; break;
-            case 'F': lua_pushnumber(L, result.f); pushed = 1; break;
-            case 'Z': lua_pushboolean(L, result.z); pushed = 1; break;
-            case 'B': lua_pushinteger(L, result.b); pushed = 1; break;
-            case 't': lua_pushinteger(L, result.s); pushed = 1; break;
-            case 'C': { char buf[1] = { (char)result.c }; lua_pushlstring(L, buf, 1); pushed = 1; break; }
-            default:  push_boxed_object(L, env, result.l); if (result.l) (*env)->DeleteLocalRef(env, result.l); pushed = 1; break;
-        }
-        break;
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    } else {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
     }
 
+    if (retCls) (*env)->DeleteLocalRef(env, retCls);
+    (*env)->DeleteLocalRef(env, declaringCls);
+    for (jsize p = 0; p < bestPcount; p++) (*env)->DeleteLocalRef(env, pcs[p]);
+    free(pcs);
+    (*env)->DeleteGlobalRef(env, best);
     (*env)->DeleteLocalRef(env, modCls);
-    (*env)->DeleteLocalRef(env, methodCls);
+    (*env)->DeleteLocalRef(env, execCls);
     (*env)->DeleteLocalRef(env, classCls);
-    (*env)->DeleteLocalRef(env, methods);
     return pushed;
+}
+
+// 实例/静态方法反射兜底（isCtor=0）
+static int invoke_reflective(lua_State* L, JNIEnv* env, jclass cls, jobject obj,
+                             const char* name, int wantStatic,
+                             int startIdx, int nargs) {
+    return invoke_reflective_core(L, env, cls, obj, name, wantStatic, 0, startIdx, nargs);
+}
+
+// 构造器反射兜底（isCtor=1）：成功时已把 new 出的对象压栈并返回 1
+static int invoke_reflective_ctor(lua_State* L, JNIEnv* env, jclass cls, int startIdx, int nargs) {
+    return invoke_reflective_core(L, env, cls, NULL, NULL, 0, 1, startIdx, nargs);
 }
 
 // 判断类（含继承链上的 public 方法）是否存在名为 name 的方法。
@@ -770,7 +856,8 @@ static const char* lua_type_to_jni_sig(lua_State* L, int idx) {
 static jmethodID try_method_combinations(JNIEnv* env, jclass cls, const char* name,
                                           lua_State* L, int startIdx, int nargs,
                                           char returnType, int argIdx,
-                                          char* sigBuf, char* outReturnType, int isStatic) {
+                                          char* sigBuf, char* outReturnType,
+                                          char* outParamTypes, int isStatic) {
     if (argIdx == nargs) {
         strcat(sigBuf, ")");
         switch (returnType) {
@@ -802,7 +889,8 @@ static jmethodID try_method_combinations(JNIEnv* env, jclass cls, const char* na
         char saved[128];
         strcpy(saved, sigBuf);
         strcat(sigBuf, optPtrs[i]);
-        jmethodID m = try_method_combinations(env, cls, name, L, startIdx, nargs, returnType, argIdx+1, sigBuf, outReturnType, isStatic);
+        if (outParamTypes) outParamTypes[argIdx] = optPtrs[i][0];
+        jmethodID m = try_method_combinations(env, cls, name, L, startIdx, nargs, returnType, argIdx+1, sigBuf, outReturnType, outParamTypes, isStatic);
         if (m) return m;
         strcpy(sigBuf, saved);
     }
@@ -811,48 +899,49 @@ static jmethodID try_method_combinations(JNIEnv* env, jclass cls, const char* na
 
 static jmethodID try_find_method(JNIEnv* env, jclass cls, const char* name,
                                   lua_State* L, int startIdx, int nargs,
-                                  char* outReturnType, int isStatic) {
+                                  char* outReturnType, char* outParamTypes,
+                                  int isStatic) {
     char returnTypes[] = {'S','I','Z','D','F','J','V','O',0};
+    if (outParamTypes) for (int i = 0; i < nargs && i < 16; i++) outParamTypes[i] = 0;
     for (char* rt=returnTypes; *rt; rt++) {
         char sig[128] = "(";
-        jmethodID m = try_method_combinations(env, cls, name, L, startIdx, nargs, *rt, 0, sig, outReturnType, isStatic);
+        jmethodID m = try_method_combinations(env, cls, name, L, startIdx, nargs, *rt, 0, sig, outReturnType, outParamTypes, isStatic);
         if (m) return m;
     }
     return NULL;
 }
 
-static void push_jni_args(lua_State* L, JNIEnv* env, int startIdx, int nargs, jvalue* args, char* argTypes) {
+// 按目标形参的真实 JNI 类型字符打包 jvalue。targetTypes 由 try_method_combinations 的
+// outParamTypes 提供（原始 Lua 值类型可能与之不符，如整数字面量匹配到 Object 形参）。
+// 引用类型（'L'/'['）且 Lua 值为标量时，自动装箱为 Integer/Long/Double/String/Boolean，
+// 并将 boxed[i] 置 1，调用方据此释放 NewGlobalRef/NewStringUTF 生成的局部引用。
+static void push_jni_args(lua_State* L, JNIEnv* env, int startIdx, int nargs,
+                          jvalue* args, const char* targetTypes, unsigned char* boxed) {
     for (int i = 0; i < nargs; i++) {
         int idx = startIdx + i;
-        switch (argTypes[i]) {
+        char t = targetTypes[i];
+        switch (t) {
             case 'I': args[i].i = (jint)lua_tointeger(L, idx); break;
             case 'J': args[i].j = (jlong)lua_tointeger(L, idx); break;
             case 'D': args[i].d = (jdouble)lua_tonumber(L, idx); break;
             case 'F': args[i].f = (jfloat)lua_tonumber(L, idx); break;
             case 'Z': args[i].z = (jboolean)lua_toboolean(L, idx); break;
-            case 'S': args[i].l = lua_check_jstring(env, L, idx); break;
-            default: {
-                if (lua_isuserdata(L, idx)) {
-                    if (lua_getmetatable(L, idx)) {
-                        luaL_getmetatable(L, JAVAOBJECT_META);
-                        int isJavaObject = lua_rawequal(L, -1, -2);
-                        lua_pop(L, 2);
-                        if (isJavaObject) {
-                            JavaUserdata* ud = (JavaUserdata*)lua_touserdata(L, idx);
-                            if (ud) { args[i].l = ud->obj; break; }
-                        }
-                    }
-                    if (lua_getmetatable(L, idx)) {
-                        luaL_getmetatable(L, JAVAARRAY_META);
-                        int isJavaArray = lua_rawequal(L, -1, -2);
-                        lua_pop(L, 2);
-                        if (isJavaArray) {
-                            JavaArray* arr = (JavaArray*)lua_touserdata(L, idx);
-                            if (arr) { args[i].l = arr->arrayObj; break; }
-                        }
-                    }
-                }
+            case 'B': args[i].b = (jbyte)lua_tointeger(L, idx); break;
+            case 't': args[i].s = (jshort)lua_tointeger(L, idx); break;
+            case 'C': args[i].c = (jchar)lua_tointeger(L, idx); break;
+            default: { // 引用类型 'L'/'['：userdata 复用全局引用，标量自动装箱
                 args[i].l = NULL;
+                if (lua_isuserdata(L, idx)) {
+                    JavaUserdata* ud = (JavaUserdata*)luaL_testudata(L, idx, JAVAOBJECT_META);
+                    if (ud) { args[i].l = ud->obj; break; }
+                    JavaArray* arr = (JavaArray*)luaL_testudata(L, idx, JAVAARRAY_META);
+                    if (arr) { args[i].l = arr->arrayObj; break; }
+                }
+                jobject boxedObj = box_arg_object(env, L, idx);
+                if (boxedObj) {
+                    args[i].l = boxedObj;
+                    boxed[i] = 1;
+                }
                 break;
             }
         }
@@ -1062,26 +1151,28 @@ static int method_lookup_call(lua_State* L) {
     int actualIsStatic = ml->isStatic;
     char returnType = 'O';
     jmethodID method = NULL;
+    char paramTypes[16];
+    memset(paramTypes, 0, sizeof(paramTypes));
 
     if (ml->isStatic == 1) {
         cls = (jclass)ml->obj;
         actualIsStatic = 1;
-        method = try_find_method(env, cls, ml->methodName, L, firstArgIdx, nargs, &returnType, 1);
+        method = try_find_method(env, cls, ml->methodName, L, firstArgIdx, nargs, &returnType, paramTypes, 1);
     } else if (ml->isStatic == 0) {
         cls = (*env)->GetObjectClass(env, ml->obj);
         actualIsStatic = 0;
-        method = try_find_method(env, cls, ml->methodName, L, firstArgIdx, nargs, &returnType, 0);
+        method = try_find_method(env, cls, ml->methodName, L, firstArgIdx, nargs, &returnType, paramTypes, 0);
     } else {
         // isStatic == -1: 自动检测（ml->obj 是 Class 对象）
         // 先尝试静态方法
         cls = (jclass)ml->obj;
-        method = try_find_method(env, cls, ml->methodName, L, firstArgIdx, nargs, &returnType, 1);
+        method = try_find_method(env, cls, ml->methodName, L, firstArgIdx, nargs, &returnType, paramTypes, 1);
         if (method) {
             actualIsStatic = 1;
         } else {
             // 再尝试实例方法（Class 对象本身作为实例）
             cls = (*env)->GetObjectClass(env, ml->obj);
-            method = try_find_method(env, cls, ml->methodName, L, firstArgIdx, nargs, &returnType, 0);
+            method = try_find_method(env, cls, ml->methodName, L, firstArgIdx, nargs, &returnType, paramTypes, 0);
             if (method) {
                 actualIsStatic = 0;
             }
@@ -1111,15 +1202,13 @@ static int method_lookup_call(lua_State* L) {
         return 0;
     }
 
-    // 构建参数
-    char argTypes[16];
-    for (int i = 0; i < nargs && i < 16; i++) {
-        argTypes[i] = get_java_type_char(L, firstArgIdx + i);
-    }
+    // 构建参数：按解析出的真实形参类型打包，标量->引用自动装箱
+    unsigned char boxed[16];
+    memset(boxed, 0, sizeof(boxed));
 
     jvalue args[nargs];
     memset(args, 0, sizeof(args));
-    push_jni_args(L, env, firstArgIdx, nargs, args, argTypes);
+    push_jni_args(L, env, firstArgIdx, nargs, args, paramTypes, boxed);
 
     jvalue result;
     memset(&result, 0, sizeof(result));
@@ -1146,9 +1235,9 @@ static int method_lookup_call(lua_State* L) {
         }
     }
 
-    // 清理字符串参数
+    // 清理装箱/字符串生成的局部引用
     for (int i = 0; i < nargs && i < 16; i++) {
-        if (argTypes[i] == 'S' && args[i].l) {
+        if (boxed[i] && args[i].l) {
             (*env)->DeleteLocalRef(env, args[i].l);
         }
     }
@@ -1189,7 +1278,9 @@ static int java_class_call(lua_State* L) {
     int nargs = lua_gettop(L) - 1;
     char returnType = 'V';
     char sig[128] = "(";
-    jmethodID ctor = try_method_combinations(env, cls, "<init>", L, 2, nargs, returnType, 0, sig, &returnType, 0);
+    char paramTypes[16];
+    memset(paramTypes, 0, sizeof(paramTypes));
+    jmethodID ctor = try_method_combinations(env, cls, "<init>", L, 2, nargs, returnType, 0, sig, &returnType, paramTypes, 0);
     if (!ctor) {
         if (nargs == 1 && lua_isuserdata(L, 2)) {
             JavaUserdata* argUd = (JavaUserdata*)luaL_testudata(L, 2, JAVAOBJECT_META);
@@ -1200,20 +1291,26 @@ static int java_class_call(lua_State* L) {
                     (*env)->ExceptionClear(env);
                     ctor = (*env)->GetMethodID(env, cls, "<init>", "(Ljava/lang/Object;)V");
                 }
+                paramTypes[0] = 'L';
                 (*env)->DeleteLocalRef(env, argCls);
             }
         }
+    }
+    // 签名枚举及泛化构造器均未命中时，走反射打分兜底（与 invoke_reflective 同源）
+    if (!ctor) {
+        int pushed = invoke_reflective_ctor(L, env, cls, 2, nargs);
+        if (pushed != -1) return pushed;
     }
     if (!ctor || (*env)->ExceptionCheck(env)) {
         (*env)->ExceptionClear(env);
         return luaL_error(L, "constructor not found");
     }
-    char argTypes[16];
-    for (int i=0; i<nargs; i++) argTypes[i] = get_java_type_char(L, 2+i);
+    unsigned char boxed[16];
+    memset(boxed, 0, sizeof(boxed));
     jvalue args[nargs]; memset(args, 0, sizeof(args));
-    push_jni_args(L, env, 2, nargs, args, argTypes);
+    push_jni_args(L, env, 2, nargs, args, paramTypes, boxed);
     jobject obj = (*env)->NewObjectA(env, cls, ctor, args);
-    for (int i=0; i<nargs; i++) if (argTypes[i]=='S' && args[i].l) (*env)->DeleteLocalRef(env, args[i].l);
+    for (int i=0; i<nargs && i<16; i++) if (boxed[i] && args[i].l) (*env)->DeleteLocalRef(env, args[i].l);
     if (!obj || (*env)->ExceptionCheck(env)) {
         (*env)->ExceptionClear(env);
         lua_pushnil(L); lua_pushstring(L, "failed to create object"); return 2;
