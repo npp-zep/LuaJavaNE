@@ -226,13 +226,60 @@ public class LuaJMain {
         return System.getProperty("user.dir");
     }
 
+    // 统计一行 Lua 代码的净缩进变化（>0 表示进入多行模式）。
+    // 逐 token 扫描并配平同一行内的开启/闭合关键字，例如
+    //   if x then print(1) end   -> 0（if..then 与 end 同行抵消）
+    //   while c do break end     -> 0（while..do 与 end 同行抵消）
+    //   do print('x') end        -> 0
+    //   function f() return 1 end-> 0
+    // 跳过字符串字面量与 -- 单行注释，避免把 "end" 之类的文本误判。
     static int countNesting(String line) {
         int n = 0;
+        int pendingIf = 0;   // 已见 if，等待 then
+        int pendingDo = 0;   // 已见 while/for，等待其后的 do
         String t = line.trim();
-        if (t.equals("end") || t.startsWith("until ")) n--;
-        if (t.equals("do") || t.equals("else")) n++;
-        if (t.startsWith("function ") || t.startsWith("if ") || t.startsWith("for ") ||
-            t.startsWith("while ") || t.startsWith("repeat")) n++;
+        int len = t.length();
+        int i = 0;
+        while (i < len) {
+            char c = t.charAt(i);
+            if (Character.isWhitespace(c)) { i++; continue; }
+            if (c == '-' && i + 1 < len && t.charAt(i + 1) == '-') break; // 单行注释
+            if (c == '"' || c == '\'') { // 字符串字面量
+                char q = c;
+                i++;
+                while (i < len) {
+                    if (t.charAt(i) == '\\') i++;
+                    else if (t.charAt(i) == q) { i++; break; }
+                    i++;
+                }
+                continue;
+            }
+            if (Character.isLetter(c)) { // 读取标识符/关键字
+                int start = i;
+                while (i < len && (Character.isLetterOrDigit(t.charAt(i)) || t.charAt(i) == '_')) i++;
+                String w = t.substring(start, i);
+                switch (w) {
+                    case "if": n++; pendingIf++; break;
+                    case "then": if (pendingIf > 0) pendingIf--; break;
+                    case "while":
+                    case "for": n++; pendingDo++; break;
+                    case "do":
+                        if (pendingDo > 0) pendingDo--;
+                        else n++;
+                        break;
+                    case "function":
+                    case "repeat": n++; break;
+                    case "until": n--; break;
+                    case "end":
+                        n--;
+                        if (pendingIf > 0) pendingIf--;
+                        break;
+                    default: break; // elseif / else / local / return 等不改变块深度
+                }
+                continue;
+            }
+            i++;
+        }
         return n;
     }
 }

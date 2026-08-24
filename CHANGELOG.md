@@ -1,3 +1,7 @@
+## [Unreleased]
+### Fixed
+- **REPL continuation prompt (JLine) misjudged indentation when open/close keywords share one line**: `countNesting` only matched lines that were *entirely* a keyword, so a self-closing line such as `if x then print(1) end` was counted as +1 and the REPL wrongly waited for more input in `>>` mode. It now scans tokens and balances same-line pairs — `if..then..end`, `while..do..end`, `for..in..do..end`, `function..end`, standalone `do..end` and `repeat..until` all net to 0, `else`/`elseif` no longer change depth, and keywords inside string literals or `--` comments are ignored.
+
 ## [2.2.6] - 2026-08-23
 ### Fixed
 - `LuaRuntime.compile()` crash on x86_64 Linux — use-after-free resolved via reference counting on `lua_State`: each `LuaFunctionObj` / `LuaInvocationHandler` holds a reference on the state, which is only `lua_close`d when the last reference is released (even if `LuaRuntime.close()` is called first)
