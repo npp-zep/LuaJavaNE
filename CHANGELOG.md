@@ -1,4 +1,4 @@
-## [Unreleased]
+## [2.2.6] - 2026-08-23
 ### Fixed
 - `LuaRuntime.compile()` crash on x86_64 Linux — use-after-free resolved via reference counting on `lua_State`: each `LuaFunctionObj` / `LuaInvocationHandler` holds a reference on the state, which is only `lua_close`d when the last reference is released (even if `LuaRuntime.close()` is called first)
 - Static-method colon call syntax `Class:method(...)` now correctly strips the implicit class `self` argument, fixing "method not found" for static methods (e.g. `Math:max(10, 20)`)
