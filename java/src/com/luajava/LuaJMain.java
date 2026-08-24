@@ -9,8 +9,6 @@ public class LuaJMain {
     static int nesting = 0;
     static final String VERSION = System.getProperty("luajava.version", "dev");
     static final String NAME = System.getProperty("luajava.name", "LuaJavaNE");
-    static final String COPYRIGHT = System.getProperty("luajava.copyright", "2026 npp-zep");
-    static final String LICENSE = System.getProperty("luajava.license", "MIT");
     static final String URL = System.getProperty("luajava.url", "https://github.com/npp-zep/LuaJavaNE");
 
     public static void main(String[] args) {
@@ -32,14 +30,13 @@ public class LuaJMain {
         System.out.println("Lua version: " + getLuaVersion());
         System.out.println("[" + javaVendor + " JDK " + javaVer + " on " + osName + " " + osArch + "]");
         System.out.println("Built with: " + getCCVersion());
-        System.out.println("Type \"help\", \"copyright\", \"credits\" or \"license\" for more information.");
+        System.out.println("Type \"help\", \"credits\" or \"license\" for more information.");
     }
 
     static String getLuaVersion() {
         LuaRuntime rt = null;
         try {
             rt = new LuaRuntime();
-            // 确保 _VERSION 存在
             rt.doString("_VERSION = _VERSION or 'unknown'");
             Object ver = rt.getGlobal("_VERSION");
             return ver != null ? ver.toString() : "unknown";
@@ -89,7 +86,7 @@ public class LuaJMain {
         System.out.println("  \\q, \\quit      exit REPL");
         System.out.println("  \\h, \\help      show this help");
         System.out.println("  =expr           evaluate and print expression");
-        System.out.println("  help, copyright, credits, license  show information");
+        System.out.println("  help, credits, license  show information");
         System.out.println();
         System.out.println("Examples:");
         System.out.println("  luaj -e \"print(1+1)\"");
@@ -106,7 +103,7 @@ public class LuaJMain {
         System.out.println("  \\q, \\quit      exit REPL");
         System.out.println("  \\h, \\help      show this help");
         System.out.println("  =expr           evaluate and print expression");
-        System.out.println("  help, copyright, credits, license  show information");
+        System.out.println("  help, credits, license  show information");
         System.out.println();
         System.out.println("Examples:");
         System.out.println("  > 1+1");
@@ -155,13 +152,12 @@ public class LuaJMain {
                 helpRepl();
                 continue;
             }
-            if (line.equals("\\copyright") || line.equals("copyright") ||
-                line.equals("\\credits") || line.equals("credits") ||
-                line.equals("\\license") || line.equals("license")) {
-                System.out.println(NAME + " " + VERSION + " - Lua + Java bidirectional engine");
-                System.out.println("Copyright (c) " + COPYRIGHT);
-                System.out.println(LICENSE + " License. See LICENSE file for details.");
-                System.out.println(URL);
+            if (line.equals("\\credits") || line.equals("credits")) {
+                showCredits();
+                continue;
+            }
+            if (line.equals("\\license") || line.equals("license")) {
+                showLicense();
                 continue;
             }
             if (line.startsWith("=")) {
@@ -175,6 +171,59 @@ public class LuaJMain {
             }
         }
         L.close();
+    }
+
+    static void showCredits() {
+        System.out.println(NAME + " " + VERSION + " - Lua + Java bidirectional engine");
+        System.out.println("Credits:");
+        System.out.println("  Project Lead: npp-zep");
+        System.out.println("  Built on LuaJava - Lua scripting for Java");
+        System.out.println("  Uses JLine for REPL line editing");
+        System.out.println(URL);
+    }
+
+    static void showLicense() {
+        // 获取 luaj.sh 所在目录的 LICENSE 文件
+        String scriptDir = getScriptDirectory();
+        File licenseFile = new File(scriptDir, "LICENSE");
+        
+        if (!licenseFile.exists()) {
+            System.err.println("License file not found: " + licenseFile.getAbsolutePath());
+            System.err.println("Default license: MIT License");
+            System.err.println("See " + URL + " for license information.");
+            return;
+        }
+
+        try (BufferedReader reader = new BufferedReader(new FileReader(licenseFile))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                System.out.println(line);
+            }
+        } catch (IOException e) {
+            System.err.println("Error reading LICENSE file: " + e.getMessage());
+        }
+    }
+
+    static String getScriptDirectory() {
+        String path = System.getProperty("luaj.script.path");
+        if (path != null && !path.isEmpty()) {
+            return new File(path).getParent();
+        }
+        
+        // 尝试从类路径获取
+        String classPath = System.getProperty("java.class.path");
+        if (classPath != null) {
+            String[] paths = classPath.split(File.pathSeparator);
+            for (String p : paths) {
+                File f = new File(p);
+                if (f.getName().equals("luajava.jar") || f.getName().contains("luajava")) {
+                    return f.getParent();
+                }
+            }
+        }
+        
+        // 默认返回当前目录
+        return System.getProperty("user.dir");
     }
 
     static int countNesting(String line) {
