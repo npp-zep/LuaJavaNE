@@ -79,7 +79,7 @@ local version = System.getProperty("java.version")
 print(version)
 
 -- 数学函数
-local pi = Math.PI()            -- 获取常量（静态字段）
+local pi = Math.PI              -- 获取常量（静态字段，无需括号）
 local maxVal = Math:max(10, 20) -- 冒号形式调用静态方法
 ```
 

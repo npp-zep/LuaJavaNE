@@ -1186,18 +1186,18 @@ static int method_lookup_call(lua_State* L) {
             jclass scls = (ml->isStatic == 1) ? cls : (jclass)ml->obj;
             int pushed = invoke_reflective(L, env, scls, NULL, ml->methodName, 1, firstArgIdx, nargs);
             if (pushed != -1) {
-                if (cls && ml->isStatic != 1) (*env)->DeleteLocalRef(env, cls);
+                if (cls && (jobject)cls != ml->obj) (*env)->DeleteLocalRef(env, cls);
                 return pushed;
             }
         }
         if (ml->isStatic == 0 || ml->isStatic == -1) {
             int pushed = invoke_reflective(L, env, cls, ml->obj, ml->methodName, 0, firstArgIdx, nargs);
             if (pushed != -1) {
-                if (cls && ml->isStatic != 1) (*env)->DeleteLocalRef(env, cls);
+                if (cls && (jobject)cls != ml->obj) (*env)->DeleteLocalRef(env, cls);
                 return pushed;
             }
         }
-        if (cls && ml->isStatic != 1) (*env)->DeleteLocalRef(env, cls);
+        if (cls && (jobject)cls != ml->obj) (*env)->DeleteLocalRef(env, cls);
         luaL_error(L, "method not found: %s", ml->methodName);
         return 0;
     }
@@ -1244,12 +1244,12 @@ static int method_lookup_call(lua_State* L) {
 
     if ((*env)->ExceptionCheck(env)) {
         (*env)->ExceptionClear(env);
-        if (cls && ml->isStatic != 1) (*env)->DeleteLocalRef(env, cls);
+        if (cls && (jobject)cls != ml->obj) (*env)->DeleteLocalRef(env, cls);
         luaL_error(L, "method threw exception: %s", ml->methodName);
         return 0;
     }
 
-    if (cls && ml->isStatic != 1) (*env)->DeleteLocalRef(env, cls);
+    if (cls && (jobject)cls != ml->obj) (*env)->DeleteLocalRef(env, cls);
     return push_java_result(L, env, result, returnType);
 }
 
