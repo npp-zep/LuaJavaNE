@@ -4,6 +4,7 @@
 - Static-method colon call syntax `Class:method(...)` now correctly strips the implicit class `self` argument, fixing "method not found" for static methods (e.g. `Math:max(10, 20)`)
 - `LuaFunctionObj` JNI method names aligned with the Java declarations (`callMultipleNative` / `destroyNative`)
 - Dynamic proxy `Object`-returning interface methods (e.g. `Supplier.get()`) now convert boxed/string results to native Lua values instead of opaque userdata, matching Java→Lua argument/return conversion
+- **JVM SIGSEGV / wrong-overload calls**: method and constructor overload resolution no longer binds to the first name/arity-compatible method. A per-argument scoring resolver (`lua_score_with_class`) now prefers the exact primitive match (respecting integer range), and only accepts reference parameters assignable from the Lua boxed value — so `sb:append(5)` picks `append(int)`/`append(long)` instead of `append(StringBuffer)` and passing an Integer to the wrong slot no longer crashes the JVM. Method and constructor calls share the same two-phase (pick-best + invoke) resolver, with the fast signature-based lookup still attempted first.
 
 ### Changed
 - Docs: removed the known "compile() crash on x86_64" limitation; documented static-method colon syntax and the refcount-based lifecycle of `LuaFunctionObj`
