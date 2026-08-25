@@ -106,6 +106,7 @@ release: clean all
 	cp luajava.jar release/
 	cp select_jdk.sh release/
 	cp luaj.sh release/
+	cp LICENSE release/
 	cp version.properties release/
 	cp lib/jline.jar release/lib/
 	cp -r examples/* release/examples/
