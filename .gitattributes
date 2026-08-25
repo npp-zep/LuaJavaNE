@@ -1,0 +1,3 @@
+lua/lua-5.4.8/** linguist-vendored
+native/libs/sleef/** linguist-vendored
+test/** linguist-vendored
