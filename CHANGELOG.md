@@ -1,4 +1,8 @@
 ## [Unreleased]
+### Added
+- **`java.listall()` to enumerate the cross-state store**: iterates the FNV-1a hash table and returns a `key -> value` Lua table snapshot of all stored entries, e.g. `for k, v in pairs(java.listall()) do ... end`. Entries whose value was degraded to `nil` (unsupported complex types) are skipped. Registered between `fetch` and `deleteStore`; documented in README and `docs/Java4Lua.md`.
+- **Module-aware REPL autocompletion**: the JLine completer now covers the full Lua 5.4 standard library (base globals plus `string`, `table`, `math`, `io`, `os`, `coroutine`, `utf8`, `debug`, `package`) and all LuaJavaNE extension libraries (`java`, `clac`, `utils`, `gc`). Typing a dotted prefix like `string.s` or `clac.batch_` only suggests functions of that module; bare words complete keywords, base functions and module names.
+
 ### Fixed
 - **REPL continuation prompt (JLine) misjudged indentation when open/close keywords share one line**: `countNesting` only matched lines that were *entirely* a keyword, so a self-closing line such as `if x then print(1) end` was counted as +1 and the REPL wrongly waited for more input in `>>` mode. It now scans tokens and balances same-line pairs — `if..then..end`, `while..do..end`, `for..in..do..end`, `function..end`, standalone `do..end` and `repeat..until` all net to 0, `else`/`elseif` no longer change depth, and keywords inside string literals or `--` comments are ignored.
 
