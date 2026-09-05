@@ -131,7 +131,8 @@ public class LineEditor {
                 for (String f : funcs) {
                     if (f.startsWith(prefix)) {
                         String full = word.substring(0, dot) + "." + f;
-                        candidates.add(new Candidate(full, full, null, null, " ", null, true));
+                        // suffix 为 null：补全后不自动加空格，由用户决定是否输入参数
+                        candidates.add(new Candidate(full, full, null, null, null, null, true));
                     }
                 }
             }
@@ -141,20 +142,20 @@ public class LineEditor {
         // 普通单词：关键字 + 基础库函数 + 模块名（补全到 "module."）
         for (String kw : LUA_KEYWORDS) {
             if (kw.startsWith(word)) {
-                candidates.add(new Candidate(kw, kw, null, null, " ", null, true));
+                candidates.add(new Candidate(kw, kw, null, null, null, null, true));
             }
         }
 
         for (String fn : BASE_FUNCTIONS) {
             if (fn.startsWith(word)) {
-                candidates.add(new Candidate(fn, fn, null, null, " ", null, true));
+                candidates.add(new Candidate(fn, fn, null, null, null, null, true));
             }
         }
 
         for (String mod : MODULE_FUNCTIONS.keySet()) {
             if (mod.startsWith(word)) {
                 String full = mod + ".";
-                candidates.add(new Candidate(full, full, null, null, " ", null, true));
+                candidates.add(new Candidate(full, full, null, null, null, null, true));
             }
         }
     }
