@@ -4,6 +4,8 @@ build_ninja/
 out/
 luajava.jar
 release/
+pkg/
+*.deb
 
 # 平台特定文件
 *.so
