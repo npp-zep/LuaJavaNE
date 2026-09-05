@@ -117,7 +117,8 @@ release: clean all
 # ---------- Debian 包 ----------
 PACKAGE_NAME := luajavane
 DEB_ARCH := $(shell dpkg --print-architecture 2>/dev/null || echo amd64)
-DEB_FILE := $(PACKAGE_NAME)_$(PROJECT_VERSION)_$(DEB_ARCH).deb
+DEB_FILE = $(PACKAGE_NAME)_$(PROJECT_VERSION)_$(DEB_ARCH)$(DEB_SUFFIX).deb
+DEB_SUFFIX ?=
 DEB_DIR := pkg
 # 归档根目录：Debian/Ubuntu 为 usr（对应系统 /）；Termux 自动识别
 # （优先 PREFIX 环境变量，其次直接探测 /data/data/com.termux 文件系统，不依赖 shell 导出）
@@ -164,8 +165,9 @@ deb: all
 	@echo "Debian package created: $(DEB_FILE)"
 	@echo "Install with: sudo apt install ./$(DEB_FILE)   (or: sudo dpkg -i $(DEB_FILE))"
 
-# ---------- Termux 包（归档根目录为完整 Termux prefix） ----------
+# ---------- Termux 包（归档根目录为完整 Termux prefix；文件名加 -termux，可与常规 deb 在同一台机器上共存） ----------
 deb-termux: DEB_ARCHIVE_PREFIX = data/data/com.termux/files/usr
+deb-termux: DEB_SUFFIX = -termux
 deb-termux: deb
 
 # ---------- 清理 ----------
