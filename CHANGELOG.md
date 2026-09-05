@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+## [2.2.7.1] - 2026-09-05
+### Fixed
+- **Termux deb 架构名错误导致依赖不可装**：在 Debian/Ubuntu（如 CI 的 `ubuntu-24.04-arm`）上交叉打 Termux 包时，`dpkg --print-architecture` 返回 `arm64`，而 Termux 源里只有 `aarch64` 包，apt 按 `:arm64` 限定符匹配全部失败。`make deb-termux` 现在把架构名映射为 Termux 约定（`arm64→aarch64`、`armhf→arm`、`i386→i686`、`amd64→x86_64`），产出 `luajavane_<version>_aarch64-termux.deb`。
+
 ## [2.2.7] - 2026-09-05
 ### Added
 - **`java.listall()` to enumerate the cross-state store**: iterates the FNV-1a hash table and returns a `key -> value` Lua table snapshot of all stored entries, e.g. `for k, v in pairs(java.listall()) do ... end`. Entries whose value was degraded to `nil` (unsupported complex types) are skipped. Registered between `fetch` and `deleteStore`; documented in README and `docs/Java4Lua.md`.
@@ -9,6 +13,7 @@
 - **`make deb` auto-detects Termux**: instead of relying solely on the `PREFIX` env var (which may not be exported into `make`), the recipe now also probes the filesystem for `/data/data/com.termux/files/usr`; when either check hits, the Termux archive layout is used automatically and `make deb` prints the chosen `Archive prefix` so the result is visible.
 
 ### Fixed
+- **Termux deb 架构名错误导致依赖不可装**：在 Debian/Ubuntu（如 CI 的 `ubuntu-24.04-arm`）上交叉打 Termux 包时，`dpkg --print-architecture` 返回 `arm64`，而 Termux 源里只有 `aarch64` 包，apt 按 `:arm64` 限定符匹配全部失败。`make deb-termux` 现在把架构名映射为 Termux 约定（`arm64→aarch64`、`armhf→arm`、`i386→i686`、`amd64→x86_64`），产出 `luajavane_<version>_aarch64-termux.deb`。
 - **`make deb` failed on Termux (`control directory has bad permissions 700`)**: Termux defaults to `umask 077`, so the staged `DEBIAN` control directory was created with mode 700, which `dpkg-deb` rejects. The deb target now explicitly normalizes the whole staging tree (`chmod -R u=rwX,go=rX`) and sets `DEBIAN/control` to 0644, independent of the environment umask.
 - **REPL autocompletion no longer appends a trailing space**: JLine itself appends a space after a completed word whenever the `Candidate` is marked `complete` — even with a `null` suffix. The completer now creates candidates with `complete=false`, so accepting a completion yields `print` / `java.` with no auto-space; whether to add a space is left to the user.
 - **REPL continuation prompt (JLine) misjudged indentation when open/close keywords share one line**: `countNesting` only matched lines that were *entirely* a keyword, so a self-closing line such as `if x then print(1) end` was counted as +1 and the REPL wrongly waited for more input in `>>` mode. It now scans tokens and balances same-line pairs — `if..then..end`, `while..do..end`, `for..in..do..end`, `function..end`, standalone `do..end` and `repeat..until` all net to 0, `else`/`elseif` no longer change depth, and keywords inside string literals or `--` comments are ignored.

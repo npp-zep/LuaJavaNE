@@ -117,6 +117,21 @@ release: clean all
 # ---------- Debian 包 ----------
 PACKAGE_NAME := luajavane
 DEB_ARCH := $(shell dpkg --print-architecture 2>/dev/null || echo amd64)
+# Termux 用自己的 dpkg 架构名（aarch64/arm/i686/x86_64），与 Debian 命名（arm64/armhf/i386/amd64）不同；
+# 在 Debian 机器上交叉打 Termux 包时，apt 依赖会用 :<arch> 限定符匹配，架构名必须正确
+DEB_ARCH_TERMUX := $(DEB_ARCH)
+ifeq ($(DEB_ARCH_TERMUX),arm64)
+DEB_ARCH_TERMUX := aarch64
+endif
+ifeq ($(DEB_ARCH_TERMUX),armhf)
+DEB_ARCH_TERMUX := arm
+endif
+ifeq ($(DEB_ARCH_TERMUX),i386)
+DEB_ARCH_TERMUX := i686
+endif
+ifeq ($(DEB_ARCH_TERMUX),amd64)
+DEB_ARCH_TERMUX := x86_64
+endif
 DEB_FILE = $(PACKAGE_NAME)_$(PROJECT_VERSION)_$(DEB_ARCH)$(DEB_SUFFIX).deb
 DEB_SUFFIX ?=
 DEB_DIR := pkg
@@ -168,6 +183,7 @@ deb: all
 # ---------- Termux 包（归档根目录为完整 Termux prefix；文件名加 -termux，可与常规 deb 在同一台机器上共存） ----------
 deb-termux: DEB_ARCHIVE_PREFIX = data/data/com.termux/files/usr
 deb-termux: DEB_SUFFIX = -termux
+deb-termux: DEB_ARCH = $(DEB_ARCH_TERMUX)
 deb-termux: deb
 
 # ---------- 清理 ----------
