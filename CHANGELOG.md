@@ -4,7 +4,7 @@
 - **Module-aware REPL autocompletion**: the JLine completer now covers the full Lua 5.4 standard library (base globals plus `string`, `table`, `math`, `io`, `os`, `coroutine`, `utf8`, `debug`, `package`) and all LuaJavaNE extension libraries (`java`, `clac`, `utils`, `gc`). Typing a dotted prefix like `string.s` or `clac.batch_` only suggests functions of that module; bare words complete keywords, base functions and module names.
 
 ### Fixed
-- **REPL autocompletion no longer appends a trailing space**: every `Candidate` was created with a `" "` suffix, so accepting a completion produced `print `, `java. ` etc. — a space in places where none was wanted. The suffix is now `null`; whether to add a space is left to the user.
+- **REPL autocompletion no longer appends a trailing space**: JLine itself appends a space after a completed word whenever the `Candidate` is marked `complete` — even with a `null` suffix. The completer now creates candidates with `complete=false`, so accepting a completion yields `print` / `java.` with no auto-space; whether to add a space is left to the user.
 - **REPL continuation prompt (JLine) misjudged indentation when open/close keywords share one line**: `countNesting` only matched lines that were *entirely* a keyword, so a self-closing line such as `if x then print(1) end` was counted as +1 and the REPL wrongly waited for more input in `>>` mode. It now scans tokens and balances same-line pairs — `if..then..end`, `while..do..end`, `for..in..do..end`, `function..end`, standalone `do..end` and `repeat..until` all net to 0, `else`/`elseif` no longer change depth, and keywords inside string literals or `--` comments are ignored.
 
 ## [2.2.6.1] - 2026-08-24
