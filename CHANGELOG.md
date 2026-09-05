@@ -1,4 +1,6 @@
 ## [Unreleased]
+
+## [2.2.7] - 2026-09-05
 ### Added
 - **`java.listall()` to enumerate the cross-state store**: iterates the FNV-1a hash table and returns a `key -> value` Lua table snapshot of all stored entries, e.g. `for k, v in pairs(java.listall()) do ... end`. Entries whose value was degraded to `nil` (unsupported complex types) are skipped. Registered between `fetch` and `deleteStore`; documented in README and `docs/Java4Lua.md`.
 - **Module-aware REPL autocompletion**: the JLine completer now covers the full Lua 5.4 standard library (base globals plus `string`, `table`, `math`, `io`, `os`, `coroutine`, `utf8`, `debug`, `package`) and all LuaJavaNE extension libraries (`java`, `clac`, `utils`, `gc`). Typing a dotted prefix like `string.s` or `clac.batch_` only suggests functions of that module; bare words complete keywords, base functions and module names.
