@@ -146,7 +146,7 @@ deb: all
 	cp -r docs/* $(DEB_PREFIX)/docs/
 	cp -r examples/* $(DEB_PREFIX)/examples/
 	# DEBIAN/control
-	@printf 'Package: %s\nVersion: %s\nSection: interpreters\nPriority: optional\nArchitecture: %s\nMaintainer: %s <%s>\nDepends: default-jre-headless (>= 17) | openjdk-17-jre-headless | openjdk-21-jre-headless\nHomepage: %s\nDescription: Lua 5.4 <-> Java bidirectional interop engine (REPL + library)\n LuaJavaNE lets Lua call Java methods and Java call Lua functions directly,\n with async task support, dynamic proxies, a cross-state store and a\n SIMD-accelerated math library (clac). Ships the luaj REPL and the\n luajava library for embedding.\n' \
+	@printf 'Package: %s\nVersion: %s\nSection: interpreters\nPriority: optional\nArchitecture: %s\nMaintainer: %s <%s>\nDepends: default-jre-headless (>= 17) | openjdk-17-jre-headless | openjdk-21-jre-headless | openjdk-17 | openjdk-21 | openjdk-25\nHomepage: %s\nDescription: Lua 5.4 <-> Java bidirectional interop engine (REPL + library)\n LuaJavaNE lets Lua call Java methods and Java call Lua functions directly,\n with async task support, dynamic proxies, a cross-state store and a\n SIMD-accelerated math library (clac). Ships the luaj REPL and the\n luajava library for embedding.\n' \
 	    $(PACKAGE_NAME) $(PROJECT_VERSION) $(DEB_ARCH) "npp-zep" "264519049@qq.com" "https://github.com/npp-zep/LuaJavaNE" > $(DEB_DIR)/DEBIAN/control
 	@chmod 0644 $(DEB_DIR)/DEBIAN/control
 	# 打包（文件属主统一为 root:root）
