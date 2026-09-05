@@ -436,6 +436,7 @@ luaj -h                 # 帮助
 | java.toString(obj) | 获取对象的字符串表示 |
 | java.store(key, value) | 跨 Lua 状态存储值 |
 | java.fetch(key) | 读取跨状态存储值 |
+| java.listall() | 列出所有存储键值对（返回 key -> value 表） |
 | java.deleteStore(key) | 删除跨状态存储键 |
 
 ### Lua 侧 clac 库

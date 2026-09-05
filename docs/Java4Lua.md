@@ -313,11 +313,17 @@ java.store("greeting", "Hello")
 local val = java.fetch("myKey")   -- 返回 42
 local msg = java.fetch("greeting") -- 返回 "Hello"
 
+-- 列出所有键值对（返回 key -> value 表）
+for k, v in pairs(java.listall()) do
+    print(k, v)   -- myKey 42 / greeting Hello
+end
+
 -- 删除
 java.deleteStore("myKey")
 ```
 
 支持的类型：`nil`, `number`, `string`, `boolean`。存储的值会在进程生命周期内保留（除非显式删除）。
+`java.listall()` 返回当前进程存储的瞬态快照表，不支持的复杂类型（table/function/userdata 等）存入时会被降级为 `nil` 并在 `listall()` 中跳过。
 
 ---
 

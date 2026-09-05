@@ -2036,6 +2036,40 @@ static int java_fetch(lua_State* L) {
     return 1;
 }
 
+// 列出当前进程 store 中所有键值对，返回一个 Lua 表（key -> value）
+static int java_listall(lua_State* L) {
+    lua_newtable(L);
+    if (!store_hash) return 1;
+
+    for (int i = 0; i < bucket_count; i++) {
+        StoreEntry* e = store_hash[i];
+        while (e) {
+            // nil 值的条目跳过（rawset 为 nil 等价于删除键）
+            if (e->type != LUA_TNIL) {
+                switch (e->type) {
+                    case LUA_TNUMBER:
+                        if (e->isInteger) lua_pushinteger(L, e->value.intVal);
+                        else lua_pushnumber(L, e->value.numVal);
+                        break;
+                    case LUA_TSTRING:
+                        lua_pushstring(L, e->value.strVal);
+                        break;
+                    case LUA_TBOOLEAN:
+                        lua_pushboolean(L, e->value.boolVal);
+                        break;
+                    default:
+                        lua_pushnil(L);
+                        break;
+                }
+                // lua_setfield 按字面字符串设置字段，任意 key 均可
+                lua_setfield(L, -2, e->key);
+            }
+            e = e->next;
+        }
+    }
+    return 1;
+}
+
 static int java_deleteStore(lua_State* L) {
     const char* key = luaL_checkstring(L, 1);
     
@@ -2097,6 +2131,7 @@ static const luaL_Reg javalib[] = {
     {"newArray",    java_newArray},
     {"store",       java_store},
     {"fetch",       java_fetch},
+    {"listall",     java_listall},
     {"deleteStore", java_deleteStore},
     {"__agent_exec", java_agent_exec},
     {"runAsync",    java_runAsync},
