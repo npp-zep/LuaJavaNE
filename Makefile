@@ -128,6 +128,8 @@ deb: all
 	@echo "========================================"
 	@rm -rf $(DEB_DIR)
 	@mkdir -p $(DEB_DIR)/DEBIAN $(DEB_PREFIX)/lib $(DEB_PREFIX)/docs $(DEB_PREFIX)/examples $(DEB_DIR)/usr/bin
+	# Termux 等默认 umask=077，需显式修正权限（dpkg-deb 要求 DEBIAN 目录 0755~0775）
+	@chmod -R u=rwX,go=rX $(DEB_DIR)
 	# 启动脚本（与 release 布局一致，luaj.sh 按脚本目录查找依赖）
 	install -m 0755 luaj.sh $(DEB_PREFIX)/luaj.sh
 	install -m 0755 select_jdk.sh $(DEB_PREFIX)/select_jdk.sh
@@ -146,6 +148,7 @@ deb: all
 	# DEBIAN/control
 	@printf 'Package: %s\nVersion: %s\nSection: interpreters\nPriority: optional\nArchitecture: %s\nMaintainer: %s <%s>\nDepends: default-jre-headless (>= 17) | openjdk-17-jre-headless | openjdk-21-jre-headless\nHomepage: %s\nDescription: Lua 5.4 <-> Java bidirectional interop engine (REPL + library)\n LuaJavaNE lets Lua call Java methods and Java call Lua functions directly,\n with async task support, dynamic proxies, a cross-state store and a\n SIMD-accelerated math library (clac). Ships the luaj REPL and the\n luajava library for embedding.\n' \
 	    $(PACKAGE_NAME) $(PROJECT_VERSION) $(DEB_ARCH) "npp-zep" "264519049@qq.com" "https://github.com/npp-zep/LuaJavaNE" > $(DEB_DIR)/DEBIAN/control
+	@chmod 0644 $(DEB_DIR)/DEBIAN/control
 	# 打包（文件属主统一为 root:root）
 	dpkg-deb --build --root-owner-group $(DEB_DIR) $(DEB_FILE)
 	@rm -rf $(DEB_DIR)
