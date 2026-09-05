@@ -15,6 +15,8 @@ jobs:
         include:
           - os: ubuntu-latest
             arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
           - os: macos-latest
             arch: arm64
     runs-on: ${{ matrix.os }}
@@ -30,6 +32,14 @@ jobs:
       - name: Build Release
         run: |
           make release
+      - name: Build Debian Package
+        if: runner.os == 'Linux'
+        run: |
+          make deb
+      - name: Build Termux Package (aarch64)
+        if: runner.os == 'Linux' && matrix.arch == 'aarch64'
+        run: |
+          make deb-termux
       - name: Create Release Archive
         run: |
           # 获取版本号
@@ -45,7 +55,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: luajavane-${{ runner.os }}-${{ matrix.arch }}
-          path: luajavane-*.tar.gz
+          path: |
+            luajavane-*.tar.gz
+            *.deb
 
   publish:
     needs: build
@@ -70,7 +82,7 @@ jobs:
         run: |
           # 收集所有平台的 tar.gz 压缩包
           ASSETS=""
-          for f in artifacts/*/*.tar.gz; do
+          for f in artifacts/*/*.tar.gz artifacts/*/*.deb; do
             if [ -f "$f" ]; then
               ASSETS="$ASSETS $f"
             fi
