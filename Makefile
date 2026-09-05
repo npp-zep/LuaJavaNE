@@ -7,7 +7,7 @@ JAVA_HOME := $(strip $(shell ./select_jdk.sh))
 JAVA_BIN := $(JAVA_HOME)/bin/java
 JAVAC_BIN := $(JAVA_HOME)/bin/javac
 
-.PHONY: all clean test repl ninja release deb info
+.PHONY: all clean test repl ninja release deb deb-termux info
 
 BUILD_DIR = build
 OUT_DIR = out
@@ -119,7 +119,9 @@ PACKAGE_NAME := luajavane
 DEB_ARCH := $(shell dpkg --print-architecture 2>/dev/null || echo amd64)
 DEB_FILE := $(PACKAGE_NAME)_$(PROJECT_VERSION)_$(DEB_ARCH).deb
 DEB_DIR := pkg
-DEB_PREFIX := $(DEB_DIR)/usr/share/$(PACKAGE_NAME)
+# 归档根目录：Debian/Ubuntu 为 usr（对应系统 /）；Termux 为 data/data/com.termux/files/usr（见 deb-termux）
+DEB_ARCHIVE_PREFIX ?= usr
+DEB_PREFIX := $(DEB_DIR)/$(DEB_ARCHIVE_PREFIX)/share/$(PACKAGE_NAME)
 
 # 用 dpkg-deb 直接打包（无需 debhelper）
 deb: all
@@ -127,15 +129,15 @@ deb: all
 	@echo "  Building Debian package: $(DEB_FILE)"
 	@echo "========================================"
 	@rm -rf $(DEB_DIR)
-	@mkdir -p $(DEB_DIR)/DEBIAN $(DEB_PREFIX)/lib $(DEB_PREFIX)/docs $(DEB_PREFIX)/examples $(DEB_DIR)/usr/bin
+	@mkdir -p $(DEB_DIR)/DEBIAN $(DEB_PREFIX)/lib $(DEB_PREFIX)/docs $(DEB_PREFIX)/examples $(DEB_DIR)/$(DEB_ARCHIVE_PREFIX)/bin
 	# Termux 等默认 umask=077，需显式修正权限（dpkg-deb 要求 DEBIAN 目录 0755~0775）
 	@chmod -R u=rwX,go=rX $(DEB_DIR)
 	# 启动脚本（与 release 布局一致，luaj.sh 按脚本目录查找依赖）
 	install -m 0755 luaj.sh $(DEB_PREFIX)/luaj.sh
 	install -m 0755 select_jdk.sh $(DEB_PREFIX)/select_jdk.sh
-	# /usr/bin/luaj 包装脚本（luaj.sh 用 dirname $0 定位，不能直接符号链接）
-	@printf '#!/bin/sh\nexec /usr/share/$(PACKAGE_NAME)/luaj.sh "$$@"\n' > $(DEB_DIR)/usr/bin/luaj
-	@chmod 0755 $(DEB_DIR)/usr/bin/luaj
+	# bin/luaj 包装脚本（luaj.sh 用 dirname $0 定位，不能直接符号链接）
+	@printf '#!/bin/sh\nexec /$(DEB_ARCHIVE_PREFIX)/share/$(PACKAGE_NAME)/luaj.sh "$$@"\n' > $(DEB_DIR)/$(DEB_ARCHIVE_PREFIX)/bin/luaj
+	@chmod 0755 $(DEB_DIR)/$(DEB_ARCHIVE_PREFIX)/bin/luaj
 	# 运行时库与 jar
 	install -m 0644 build/luajava.$(LIB_EXT) $(DEB_PREFIX)/luajava.$(LIB_EXT)
 	install -m 0644 luajava.jar $(DEB_PREFIX)/luajava.jar
@@ -154,6 +156,10 @@ deb: all
 	@rm -rf $(DEB_DIR)
 	@echo "Debian package created: $(DEB_FILE)"
 	@echo "Install with: sudo apt install ./$(DEB_FILE)   (or: sudo dpkg -i $(DEB_FILE))"
+
+# ---------- Termux 包（归档根目录为完整 Termux prefix） ----------
+deb-termux: DEB_ARCHIVE_PREFIX = data/data/com.termux/files/usr
+deb-termux: deb
 
 # ---------- 清理 ----------
 clean:
