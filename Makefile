@@ -119,14 +119,21 @@ PACKAGE_NAME := luajavane
 DEB_ARCH := $(shell dpkg --print-architecture 2>/dev/null || echo amd64)
 DEB_FILE := $(PACKAGE_NAME)_$(PROJECT_VERSION)_$(DEB_ARCH).deb
 DEB_DIR := pkg
-# 归档根目录：Debian/Ubuntu 为 usr（对应系统 /）；Termux 为 data/data/com.termux/files/usr（见 deb-termux）
+# 归档根目录：Debian/Ubuntu 为 usr（对应系统 /）；Termux 自动识别
+# （优先 PREFIX 环境变量，其次直接探测 /data/data/com.termux 文件系统，不依赖 shell 导出）
 DEB_ARCHIVE_PREFIX ?= usr
+ifneq ($(findstring /data/data/com.termux,$(PREFIX)),)
+DEB_ARCHIVE_PREFIX = data/data/com.termux/files/usr
+else ifeq ($(shell test -d /data/data/com.termux/files/usr && echo yes),yes)
+DEB_ARCHIVE_PREFIX = data/data/com.termux/files/usr
+endif
 DEB_PREFIX := $(DEB_DIR)/$(DEB_ARCHIVE_PREFIX)/share/$(PACKAGE_NAME)
 
 # 用 dpkg-deb 直接打包（无需 debhelper）
 deb: all
 	@echo "========================================"
 	@echo "  Building Debian package: $(DEB_FILE)"
+	@echo "  Archive prefix: /$(DEB_ARCHIVE_PREFIX)"
 	@echo "========================================"
 	@rm -rf $(DEB_DIR)
 	@mkdir -p $(DEB_DIR)/DEBIAN $(DEB_PREFIX)/lib $(DEB_PREFIX)/docs $(DEB_PREFIX)/examples $(DEB_DIR)/$(DEB_ARCHIVE_PREFIX)/bin
