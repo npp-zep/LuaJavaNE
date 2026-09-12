@@ -7,7 +7,7 @@ JAVA_HOME := $(strip $(shell ./select_jdk.sh))
 JAVA_BIN := $(JAVA_HOME)/bin/java
 JAVAC_BIN := $(JAVA_HOME)/bin/javac
 
-.PHONY: all clean test repl ninja release deb deb-termux info
+.PHONY: all clean test repl ninja release info
 
 BUILD_DIR = build
 OUT_DIR = out
@@ -114,82 +114,9 @@ release: clean all
 	@echo "Release files are in ./release/"
 	@echo "Version: $(PROJECT_VERSION)"
 
-# ---------- Debian 包 ----------
-PACKAGE_NAME := luajavane
-DEB_ARCH := $(shell dpkg --print-architecture 2>/dev/null || echo amd64)
-# Termux 用自己的 dpkg 架构名（aarch64/arm/i686/x86_64），与 Debian 命名（arm64/armhf/i386/amd64）不同；
-# 在 Debian 机器上交叉打 Termux 包时，apt 依赖会用 :<arch> 限定符匹配，架构名必须正确
-DEB_ARCH_TERMUX := $(DEB_ARCH)
-ifeq ($(DEB_ARCH_TERMUX),arm64)
-DEB_ARCH_TERMUX := aarch64
-endif
-ifeq ($(DEB_ARCH_TERMUX),armhf)
-DEB_ARCH_TERMUX := arm
-endif
-ifeq ($(DEB_ARCH_TERMUX),i386)
-DEB_ARCH_TERMUX := i686
-endif
-ifeq ($(DEB_ARCH_TERMUX),amd64)
-DEB_ARCH_TERMUX := x86_64
-endif
-DEB_FILE = $(PACKAGE_NAME)_$(PROJECT_VERSION)_$(DEB_ARCH)$(DEB_SUFFIX).deb
-DEB_SUFFIX ?=
-DEB_DIR := pkg
-# 归档根目录：Debian/Ubuntu 为 usr（对应系统 /）；Termux 自动识别
-# （优先 PREFIX 环境变量，其次直接探测 /data/data/com.termux 文件系统，不依赖 shell 导出）
-DEB_ARCHIVE_PREFIX ?= usr
-ifneq ($(findstring /data/data/com.termux,$(PREFIX)),)
-DEB_ARCHIVE_PREFIX = data/data/com.termux/files/usr
-else ifeq ($(shell test -d /data/data/com.termux/files/usr && echo yes),yes)
-DEB_ARCHIVE_PREFIX = data/data/com.termux/files/usr
-endif
-DEB_PREFIX := $(DEB_DIR)/$(DEB_ARCHIVE_PREFIX)/share/$(PACKAGE_NAME)
-
-# 用 dpkg-deb 直接打包（无需 debhelper）
-deb: all
-	@echo "========================================"
-	@echo "  Building Debian package: $(DEB_FILE)"
-	@echo "  Archive prefix: /$(DEB_ARCHIVE_PREFIX)"
-	@echo "========================================"
-	@rm -rf $(DEB_DIR)
-	@mkdir -p $(DEB_DIR)/DEBIAN $(DEB_PREFIX)/lib $(DEB_PREFIX)/docs $(DEB_PREFIX)/examples $(DEB_DIR)/$(DEB_ARCHIVE_PREFIX)/bin
-	# Termux 等默认 umask=077，需显式修正权限（dpkg-deb 要求 DEBIAN 目录 0755~0775）
-	@chmod -R u=rwX,go=rX $(DEB_DIR)
-	# 启动脚本（与 release 布局一致，luaj.sh 按脚本目录查找依赖）
-	install -m 0755 luaj.sh $(DEB_PREFIX)/luaj.sh
-	install -m 0755 select_jdk.sh $(DEB_PREFIX)/select_jdk.sh
-	# bin/luaj 包装脚本（luaj.sh 用 dirname $0 定位，不能直接符号链接）
-	@printf '#!/bin/sh\nexec /$(DEB_ARCHIVE_PREFIX)/share/$(PACKAGE_NAME)/luaj.sh "$$@"\n' > $(DEB_DIR)/$(DEB_ARCHIVE_PREFIX)/bin/luaj
-	@chmod 0755 $(DEB_DIR)/$(DEB_ARCHIVE_PREFIX)/bin/luaj
-	# 运行时库与 jar
-	install -m 0644 build/luajava.$(LIB_EXT) $(DEB_PREFIX)/luajava.$(LIB_EXT)
-	install -m 0644 luajava.jar $(DEB_PREFIX)/luajava.jar
-	install -m 0644 lib/jline.jar $(DEB_PREFIX)/lib/jline.jar
-	# 配置与文档
-	install -m 0644 version.properties $(DEB_PREFIX)/version.properties
-	install -m 0644 LICENSE $(DEB_PREFIX)/LICENSE
-	cp -r docs/* $(DEB_PREFIX)/docs/
-	cp -r examples/* $(DEB_PREFIX)/examples/
-	# DEBIAN/control
-	@printf 'Package: %s\nVersion: %s\nSection: interpreters\nPriority: optional\nArchitecture: %s\nMaintainer: %s <%s>\nDepends: default-jre-headless (>= 17) | openjdk-17-jre-headless | openjdk-21-jre-headless | openjdk-17 | openjdk-21 | openjdk-25\nHomepage: %s\nDescription: Lua 5.4 <-> Java bidirectional interop engine (REPL + library)\n LuaJavaNE lets Lua call Java methods and Java call Lua functions directly,\n with async task support, dynamic proxies, a cross-state store and a\n SIMD-accelerated math library (clac). Ships the luaj REPL and the\n luajava library for embedding.\n' \
-	    $(PACKAGE_NAME) $(PROJECT_VERSION) $(DEB_ARCH) "npp-zep" "264519049@qq.com" "https://github.com/npp-zep/LuaJavaNE" > $(DEB_DIR)/DEBIAN/control
-	@chmod 0644 $(DEB_DIR)/DEBIAN/control
-	# 打包（文件属主统一为 root:root）
-	dpkg-deb --build --root-owner-group $(DEB_DIR) $(DEB_FILE)
-	@rm -rf $(DEB_DIR)
-	@echo "Debian package created: $(DEB_FILE)"
-	@echo "Install with: sudo apt install ./$(DEB_FILE)   (or: sudo dpkg -i $(DEB_FILE))"
-
-# ---------- Termux 包（归档根目录为完整 Termux prefix；文件名加 -termux，可与常规 deb 在同一台机器上共存） ----------
-deb-termux: DEB_ARCHIVE_PREFIX = data/data/com.termux/files/usr
-deb-termux: DEB_SUFFIX = -termux
-deb-termux: DEB_ARCH = $(DEB_ARCH_TERMUX)
-deb-termux: deb
-
 # ---------- 清理 ----------
 clean:
-	@rm -rf $(BUILD_DIR) $(OUT_DIR) build_ninja luajava.jar release $(DEB_DIR)
-	@rm -f *.deb
+	@rm -rf $(BUILD_DIR) $(OUT_DIR) build_ninja luajava.jar release
 	@echo "Cleaned."
 
 # ---------- 额外信息 ----------
