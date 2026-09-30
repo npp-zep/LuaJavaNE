@@ -190,11 +190,39 @@ print(l[1])                             -- 读取（下标从 1 开始）
 print(#l)                               -- 长度
 for i, v in ipairs(l) do print(i, v) end
 l[2] = "changed"                        -- 写回
+table.insert(l, "x")                    -- 追加（等价 List.add）
+l[#l + 1] = "y"                         -- 追加：l[#l+1] = v 等价 add
 ```
+
+写回规则：下标在 `1..#l` 内为**覆盖**（`List.set`），`#l + 1` 为**追加**（`List.add`）；写入 `#l + 1` 之外会明确报错 `list index out of bounds: N (size M)`。读取越界返回 `nil`（用于支撑 `#` 与 `ipairs` 终止）。
 
 > 注意：`Java.Array`（`java.newArray`）索引从 **0** 开始（与 Java 一致）；而 `List` 是下标从 **1** 开始的语义容器（Lua 风格）。两者不同。
 
-### 8.3 类型映射小结
+### 8.3 table 内函数 & 可调用 Java 对象
+
+**Lua 函数可存进 Java 容器，读回仍是可直接调用的 Lua 函数**：存入 `Map` / `List`（或经 `LuaTable.put` 放回表）的 Lua 函数以注册表引用（`LuaFunctionObj`）持有，读回时还原为原函数。
+
+```lua
+local m = TestBridge.makeMap()
+m.fib = function(n)                      -- 存进 Java Map
+    if n < 2 then return n end
+    return m.fib(n - 1) + m.fib(n - 2)   -- 读回并调用
+end
+print(m.fib(10))                         -- 55
+
+local l = TestBridge.makeList()
+l[1] = function(a, b) return a * b end   -- 存进 Java List
+print(l[1](6, 7))                        -- 42
+```
+
+**Java 对象可直接调用（`__call`）**：`obj(args...)` 会调用其实例方法 `call(args...)`，例如 `java.util.function.Function` 风格的代理对象；对象没有 `call` 方法时明确报错 `method not found: call`。
+
+```lua
+-- 假设 proxy 是实现 Function 的代理（handler 里有 call 函数）
+print(proxy(3))      -- 等价 proxy:call(3)
+```
+
+### 8.4 类型映射小结
 - Lua `table`（作参数/返回值）→ `com.luajava.LuaTable` 惰性引用
 - Java `Map` / `List` / `Collection`（作返回值）→ Lua 惰性容器 userdata
 - 重载方法评分：table 参数优先匹配 `LuaTable`；容器参数可匹配 `Map` / `Collection` 接口

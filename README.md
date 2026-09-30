@@ -397,7 +397,7 @@ luaj -h                 # 帮助
 | userdata | Java 对象 双向 |
 | function | LuaFunctionObj Lua → Java |
 | table | LuaTable（Lua → Java 惰性引用） |
-| Map / List / Collection（Java 返回） | 惰性容器 userdata（读取/遍历/写回） |
+| Map / List / Collection（Java 返回） | 惰性容器 userdata（读取/遍历/写回/追加，可存 Lua 函数读回可调用） |
 
 ---
 
@@ -422,11 +422,12 @@ luaj -h                 # 帮助
 |------|------|
 | java.import("类名") | 导入 Java 类 |
 | 类:new(...) | 调用构造方法 |
-| 对象:方法(...) | 调用实例方法 |
+| 对象:方法(...) / 对象(...) | 调用实例方法；对象可直接调用（`__call`，调用其 `call` 方法） |
 | 类.静态方法(...) / 类:静态方法(...) | 调用静态方法（冒号形式自动剥离类 self 参数） |
 | java.createProxy({接口...}, 表) | Lua 表实现 Java 接口 |
 | java.newArray("类型", 大小) | 创建 Java 数组 |
 | java.import("com.luajava.LuaTable") | Java 侧以 LuaTable 接收 Lua 表（活引用，见 docs/Java4Lua.md 第 8 节） |
+| 容器（Java 返回的 Map/List） | JavaTable 惰性容器：读取/遍历/写回/`#`，`l[#l+1]=v` 追加，可存 Lua 函数读回可调用 |
 | java.promise() | 创建异步 Promise |
 | java.runAsync(id, class, method, args...) | 异步调用静态方法 |
 | java.runAsyncObj(id, obj, method, args...) | 异步调用实例方法 |

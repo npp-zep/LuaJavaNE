@@ -1,3 +1,14 @@
+## [2.3.1] - 2026-09-30
+### Added
+- **List append from Lua**: `l[#l + 1] = v` on a Java `List` now appends via `List.add` (indices within `1..#l` still overwrite via `set`, and `table.insert` works as usual)
+- **Java objects callable from Lua (`__call`)**: calling an object `obj(args...)` dispatches to its instance method `call(args...)`, e.g. `Function`-style proxy handlers; a missing `call` method raises a clear `method not found: call` error
+- **Lua functions inside Java containers stay callable**: storing a Lua function into a Java `Map`/`List` (or putting one back via `LuaTable.put`) now reads out as the original, directly callable Lua function instead of an opaque userdata (`push_luafunc_to_lua` restores the `LuaFunctionObj` registry reference)
+- **`testpkg.TestBridge` ships in the main jar**: `TestBridge.java` moved from `test/` to `java/src/testpkg/` and the Makefile compiles all of `java/src`, so default `make` builds it into `out/` and packs it into `luajava.jar` — `examples/table_bridge.lua` runs out of the box (no `make test` needed) and release packages carry it too
+
+### Fixed
+- **List out-of-bounds write now errors clearly**: writing beyond `size + 1` raises `list index out of bounds: N (size M)` instead of triggering an unchecked JNI exception; reads past the end still return `nil` (kept for `#` / `ipairs` termination)
+- **`examples/table_bridge.lua` "class not found: testpkg.TestBridge"**: `luaj.sh` previously missed the `out/` directory on the classpath (test classes were only built by `make test`)
+
 ## [2.3.0] - 2026-09-30
 ### Added
 - **Bidirectional table interop between Lua and Java** via lazy (live) proxies:
