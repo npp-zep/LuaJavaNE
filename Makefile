@@ -12,7 +12,7 @@ JAVAC_BIN := $(JAVA_HOME)/bin/javac
 BUILD_DIR = build
 OUT_DIR = out
 LIB_DIR = lib
-JAVA_SRC = java/src/com/luajava
+JAVA_SRC = java/src
 TEST_SRC = test
 
 JLINE_JAR = $(LIB_DIR)/jline.jar
