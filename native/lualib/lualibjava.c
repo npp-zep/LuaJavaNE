@@ -52,6 +52,7 @@ static int method_lookup_gc(lua_State* L);
 static int java_object_index(lua_State* L);
 static int java_object_newindex(lua_State* L);
 static int java_object_gc(lua_State* L);
+static int java_object_call(lua_State* L);
 static int java_class_call(lua_State* L);
 static int java_class_index(lua_State* L);
 static int java_class_newindex(lua_State* L);
@@ -306,6 +307,11 @@ static int java_table_newindex(lua_State* L) {
     jobject val = lua_to_java_object(L, env, 3);
     if (t->isList) {
         lua_Integer i = lua_tointeger(L, 2);
+        // List 下标从 1 开始；写越界明确报错（读越界返回 nil 以支撑 #/ipairs 终止）
+        jint len = java_table_size(env, t->obj);
+        if (i < 1 || i > len) {
+            return luaL_error(L, "list index out of bounds: %d (size %d)", (int)i, (int)len);
+        }
         jclass cls = (*env)->GetObjectClass(env, t->obj);
         jmethodID set = (*env)->GetMethodID(env, cls, "set", "(ILjava/lang/Object;)Ljava/lang/Object;");
         (*env)->CallObjectMethod(env, t->obj, set, (jint)(i - 1), val);
@@ -1474,6 +1480,17 @@ static int method_lookup_gc(lua_State* L) {
     return 0;
 }
 
+// ========== Java 对象 __call ==========
+// obj(a, b, ...) → 调用该 Java 对象的实例方法 call(a, b, ...)；无 call 方法时报错。
+// 复用 method_lookup_call：把栈重排为 [lookup_call, obj, args...]，由它剥离 self 后按实例方法调用。
+static int java_object_call(lua_State* L) {
+    JavaUserdata* ud = (JavaUserdata*)luaL_checkudata(L, 1, JAVAOBJECT_META);
+    if (!ud || !ud->obj) return luaL_error(L, "attempt to call a nil Java object");
+    new_method_lookup(L, ud->obj, "call", 0);   // push method lookup for instance "call"
+    lua_rotate(L, 1, 1);                        // [obj, a1..an] -> [lookup, obj, a1..an]
+    return method_lookup_call(L);
+}
+
 // ========== Java.Class 元方法 ==========
 static int java_class_tostring(lua_State* L) {
     JNIEnv* env = getEnv();
@@ -1898,6 +1915,7 @@ static void create_metatables(lua_State* L) {
     lua_pop(L, 1);
 
     luaL_newmetatable(L, JAVAOBJECT_META);
+    lua_pushstring(L, "__call");     lua_pushcfunction(L, java_object_call);     lua_settable(L, -3);
     lua_pushstring(L, "__index");    lua_pushcfunction(L, java_object_index);    lua_settable(L, -3);
     lua_pushstring(L, "__newindex"); lua_pushcfunction(L, java_object_newindex); lua_settable(L, -3);
     lua_pushstring(L, "__tostring"); lua_pushcfunction(L, java_object_tostring); lua_settable(L, -3);
