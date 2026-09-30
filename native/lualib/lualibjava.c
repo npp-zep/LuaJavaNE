@@ -309,12 +309,18 @@ static int java_table_newindex(lua_State* L) {
         lua_Integer i = lua_tointeger(L, 2);
         // List 下标从 1 开始；写越界明确报错（读越界返回 nil 以支撑 #/ipairs 终止）
         jint len = java_table_size(env, t->obj);
-        if (i < 1 || i > len) {
+        if (i < 1 || i > len + 1) {
             return luaL_error(L, "list index out of bounds: %d (size %d)", (int)i, (int)len);
         }
         jclass cls = (*env)->GetObjectClass(env, t->obj);
-        jmethodID set = (*env)->GetMethodID(env, cls, "set", "(ILjava/lang/Object;)Ljava/lang/Object;");
-        (*env)->CallObjectMethod(env, t->obj, set, (jint)(i - 1), val);
+        if (i == len + 1) {
+            // 追加：l[#l+1] = v
+            jmethodID add = (*env)->GetMethodID(env, cls, "add", "(ILjava/lang/Object;)V");
+            (*env)->CallVoidMethod(env, t->obj, add, (jint)(i - 1), val);
+        } else {
+            jmethodID set = (*env)->GetMethodID(env, cls, "set", "(ILjava/lang/Object;)Ljava/lang/Object;");
+            (*env)->CallObjectMethod(env, t->obj, set, (jint)(i - 1), val);
+        }
         (*env)->DeleteLocalRef(env, cls);
     } else {
         jclass cls = (*env)->GetObjectClass(env, t->obj);
@@ -681,7 +687,16 @@ static int push_boxed_object(lua_State* L, JNIEnv* env, jobject val) {
         jchar ch = (*env)->CallCharMethod(env, val, m);
         lua_pushlstring(L, (const char*)&ch, 1);
     } else {
-        java_table_dispatch(L, val);
+        // LuaFunctionObj -> 还原为原 Lua 函数（容器里存的 Lua 函数读回仍可直接调用）
+        jclass fnCls = (*env)->FindClass(env, "com/luajava/LuaFunctionObj");
+        if ((*env)->IsInstanceOf(env, val, fnCls)) {
+            (*env)->DeleteLocalRef(env, fnCls);
+            extern int push_luafunc_to_lua(lua_State*, JNIEnv*, jobject);
+            push_luafunc_to_lua(L, env, val);
+        } else {
+            (*env)->DeleteLocalRef(env, fnCls);
+            java_table_dispatch(L, val);
+        }
     }
     (*env)->DeleteLocalRef(env, strCls);
     (*env)->DeleteLocalRef(env, ocls);

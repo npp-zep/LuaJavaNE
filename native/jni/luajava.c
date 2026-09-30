@@ -145,11 +145,34 @@ void throwLuaError(JNIEnv* env, lua_State* L, int errCode) {
 
 // ========== Lua ↔ Java 类型转换 ==========
 
+// 将 LuaFunctionObj（持 Lua 函数注册表引用）还原压入调用方 Lua 栈，返回 1。
+// 需在已持有 LUA_LOCK 的上下文内调用；本进程为单 lua_State，故按调用方 state rawgeti 即可。
+int push_luafunc_to_lua(lua_State* L, JNIEnv* env, jobject obj) {
+    jclass cls = (*env)->GetObjectClass(env, obj);
+    jfieldID sf = (*env)->GetFieldID(env, cls, "statePtr", "J");
+    jfieldID rf = (*env)->GetFieldID(env, cls, "ref", "I");
+    jint ref = (*env)->GetIntField(env, obj, rf);
+    (*env)->DeleteLocalRef(env, cls);
+    if (ref >= 0) lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    else lua_pushnil(L);
+    if (!lua_isfunction(L, -1)) { lua_pop(L, 1); lua_pushnil(L); }
+    return 1;
+}
+
 void push_java_arg(lua_State* L, JNIEnv* env, jobject arg) {
     if (arg == NULL) {
         lua_pushnil(L);
         return;
     }
+
+    // LuaFunctionObj -> 还原为原 Lua 函数（放回 Lua table / 容器时保持可调用）
+    jclass fnCls = (*env)->FindClass(env, "com/luajava/LuaFunctionObj");
+    if ((*env)->IsInstanceOf(env, arg, fnCls)) {
+        (*env)->DeleteLocalRef(env, fnCls);
+        push_luafunc_to_lua(L, env, arg);
+        return;
+    }
+    (*env)->DeleteLocalRef(env, fnCls);
 
     // String -> Lua 字符串
     jclass cls = (*env)->FindClass(env, "java/lang/String");
