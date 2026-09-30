@@ -80,7 +80,8 @@ test: all
 	     --select-class=com.luajava.PromiseTest \
 	     --select-class=com.luajava.AsyncTest \
 	     --select-class=com.luajava.AgentTest \
-	     --select-class=com.luajava.CallbackTest
+	     --select-class=com.luajava.CallbackTest \
+	     --select-class=com.luajava.TableBridgeTest
 	@echo ""
 	@echo "All JUnit tests passed."
 

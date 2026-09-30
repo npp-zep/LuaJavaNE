@@ -8,6 +8,7 @@ extern void java_promise_cleanup_state(lua_State* L);
 #include "com_luajava_LuaRuntime.h"
 #include "com_luajava_LuaFunctionObj.h"
 #include "com_luajava_LuaInvocationHandler.h"
+#include "com_luajava_LuaTable.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -219,8 +220,10 @@ void push_java_arg(lua_State* L, JNIEnv* env, jobject arg) {
     }
     (*env)->DeleteLocalRef(env, cls);
 
-    // 其他对象（含数组）：包装为 userdata（数组自动使用 Java.Array 语义）
-    new_java_object_ud(L, arg);
+    // 其他对象（含数组）：包装为 userdata（数组自动使用 Java.Array 语义）；
+    // Map/List 经 java_table_dispatch 包成惰性 JavaTable
+    extern int java_table_dispatch(lua_State* L, jobject obj);
+    java_table_dispatch(L, arg);
 }
 
 jobject lua_to_java_object(lua_State* L, JNIEnv* env, int idx) {
@@ -267,8 +270,141 @@ jobject lua_to_java_object(lua_State* L, JNIEnv* env, int idx) {
             (*env)->DeleteLocalRef(env, cls);
             return obj;
         }
+        case LUA_TTABLE: {
+            lua_pushvalue(L, idx);
+            int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+            lua_state_add_ref(L); // 该 LuaTable 占用状态的一个引用
+            lua_pushstring(L, "luajava_stateptr");
+            lua_rawget(L, LUA_REGISTRYINDEX);
+            jlong statePtr = (jlong)lua_tointeger(L, -1);
+            lua_pop(L, 1);
+            jclass cls = (*env)->FindClass(env, "com/luajava/LuaTable");
+            jmethodID ctor = (*env)->GetMethodID(env, cls, "<init>", "(JI)V");
+            jobject obj = (*env)->NewObject(env, cls, ctor, statePtr, (jint)ref);
+            (*env)->DeleteLocalRef(env, cls);
+            return obj;
+        }
         default: return NULL;
     }
+}
+
+// ========== 从 LuaTable Java 对象取出 statePtr/ref 字段 ==========
+static int luatable_get_refs(JNIEnv* env, jobject obj, lua_State** Lout, int* refout) {
+    jclass cls = (*env)->GetObjectClass(env, obj);
+    jfieldID sf = (*env)->GetFieldID(env, cls, "statePtr", "J");
+    jfieldID rf = (*env)->GetFieldID(env, cls, "ref", "I");
+    jlong Lptr = (*env)->GetLongField(env, obj, sf);
+    jint ref = (*env)->GetIntField(env, obj, rf);
+    (*env)->DeleteLocalRef(env, cls);
+    if (Lptr == 0 || ref < 0) return 0;
+    *Lout = (lua_State*)(uintptr_t)Lptr;
+    *refout = ref;
+    return 1;
+}
+
+// ========== LuaTable.getNative ==========
+JNIEXPORT jobject JNICALL Java_com_luajava_LuaTable_getNative
+  (JNIEnv* env, jobject obj, jobject key) {
+    LUA_LOCK();
+    lua_State* L; int ref;
+    jobject result = NULL;
+    if (luatable_get_refs(env, obj, &L, &ref)) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ref);   // push table
+        if (key == NULL) lua_pushnil(L);
+        else push_java_arg(L, env, key);          // push key
+        lua_rawget(L, -2);                        // table[key]
+        result = lua_to_java_object(L, env, -1);
+        lua_pop(L, 2);
+    }
+    LUA_UNLOCK();
+    return result;
+}
+
+// ========== LuaTable.putNative ==========
+JNIEXPORT void JNICALL Java_com_luajava_LuaTable_putNative
+  (JNIEnv* env, jobject obj, jobject key, jobject value) {
+    LUA_LOCK();
+    lua_State* L; int ref;
+    if (luatable_get_refs(env, obj, &L, &ref)) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ref);   // push table
+        if (key == NULL) lua_pushnil(L);
+        else push_java_arg(L, env, key);          // push key
+        if (value == NULL) lua_pushnil(L);
+        else push_java_arg(L, env, value);        // push value
+        lua_rawset(L, -3);                        // table[key] = value
+        lua_pop(L, 1);
+    }
+    LUA_UNLOCK();
+}
+
+// ========== LuaTable.sizeNative ==========
+JNIEXPORT jint JNICALL Java_com_luajava_LuaTable_sizeNative
+  (JNIEnv* env, jobject obj) {
+    LUA_LOCK();
+    lua_State* L; int ref;
+    jint size = 0;
+    if (luatable_get_refs(env, obj, &L, &ref)) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+        size = (jint)lua_rawlen(L, -1);
+        lua_pop(L, 1);
+    }
+    LUA_UNLOCK();
+    return size;
+}
+
+// ========== LuaTable.keysNative ==========
+JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaTable_keysNative
+  (JNIEnv* env, jobject obj) {
+    LUA_LOCK();
+    jclass objCls = (*env)->FindClass(env, "java/lang/Object");
+    jobjectArray arr = (*env)->NewObjectArray(env, 0, objCls, NULL);
+    lua_State* L; int ref;
+    if (luatable_get_refs(env, obj, &L, &ref)) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+        // 第一遍统计键个数
+        int count = 0;
+        lua_pushnil(L);
+        while (lua_next(L, -2) != 0) { lua_pop(L, 1); count++; }
+        (*env)->DeleteLocalRef(env, objCls);
+        objCls = (*env)->FindClass(env, "java/lang/Object");
+        jobjectArray out = (*env)->NewObjectArray(env, count, objCls, NULL);
+        // 第二遍收集键
+        int i = 0;
+        lua_pushnil(L);
+        while (lua_next(L, -2) != 0) {
+            jobject k = lua_to_java_object(L, env, -2);   // key 在 -2
+            (*env)->SetObjectArrayElement(env, out, i++, k);
+            if (k) (*env)->DeleteLocalRef(env, k);
+            lua_pop(L, 1);                                 // 弹出 value，保留 key
+        }
+        lua_pop(L, 1);                                     // 弹出 table
+        arr = out;
+    }
+    (*env)->DeleteLocalRef(env, objCls);
+    LUA_UNLOCK();
+    return arr;
+}
+
+// ========== LuaTable.destroyNative ==========
+JNIEXPORT void JNICALL Java_com_luajava_LuaTable_destroyNative
+  (JNIEnv* env, jobject obj) {
+    LUA_LOCK();
+    jclass cls = (*env)->GetObjectClass(env, obj);
+    jfieldID sf = (*env)->GetFieldID(env, cls, "statePtr", "J");
+    jfieldID rf = (*env)->GetFieldID(env, cls, "ref", "I");
+    jlong Lptr = (*env)->GetLongField(env, obj, sf);
+    jint ref = (*env)->GetIntField(env, obj, rf);
+    (*env)->DeleteLocalRef(env, cls);
+    if (Lptr != 0 && ref >= 0) {
+        lua_State* L = (lua_State*)(uintptr_t)Lptr;
+        luaL_unref(L, LUA_REGISTRYINDEX, ref);
+        (*env)->SetIntField(env, obj, rf, -1);
+        if (lua_state_release_ref(L)) {
+            java_promise_cleanup_state(L);
+            lua_close(L);
+        }
+    }
+    LUA_UNLOCK();
 }
 
 // ========== LuaRuntime._newState ==========
@@ -819,9 +955,9 @@ static int java_method_callback(lua_State* L) {
         lua_pushboolean(L, (*env)->CallBooleanMethod(env, result, mid));
         (*env)->DeleteLocalRef(env, boolCls);
     } else {
-        // 返回 Java 对象
-        extern int new_java_object_ud(lua_State* L, jobject obj);
-        new_java_object_ud(L, result);
+        // 返回 Java 对象：Map/List 包成惰性 JavaTable，其余为普通 Java userdata
+        extern int java_table_dispatch(lua_State* L, jobject obj);
+        java_table_dispatch(L, result);
     }
     (*env)->DeleteLocalRef(env, result);
     return 1;
@@ -976,7 +1112,8 @@ static int lua_java_callback_entry(lua_State* L) {
             (*env)->GetMethodID(env, boolCls, "booleanValue", "()Z")));
         (*env)->DeleteLocalRef(env, boolCls);
     } else {
-        new_java_object_ud(L, result);
+        extern int java_table_dispatch(lua_State* L, jobject obj);
+        java_table_dispatch(L, result);
     }
     (*env)->DeleteLocalRef(env, result);
     return 1;

@@ -396,6 +396,8 @@ luaj -h                 # 帮助
 | nil | null / void 返回 |
 | userdata | Java 对象 双向 |
 | function | LuaFunctionObj Lua → Java |
+| table | LuaTable（Lua → Java 惰性引用） |
+| Map / List / Collection（Java 返回） | 惰性容器 userdata（读取/遍历/写回） |
 
 ---
 
@@ -424,6 +426,7 @@ luaj -h                 # 帮助
 | 类.静态方法(...) / 类:静态方法(...) | 调用静态方法（冒号形式自动剥离类 self 参数） |
 | java.createProxy({接口...}, 表) | Lua 表实现 Java 接口 |
 | java.newArray("类型", 大小) | 创建 Java 数组 |
+| java.import("com.luajava.LuaTable") | Java 侧以 LuaTable 接收 Lua 表（活引用，见 docs/Java4Lua.md 第 8 节） |
 | java.promise() | 创建异步 Promise |
 | java.runAsync(id, class, method, args...) | 异步调用静态方法 |
 | java.runAsyncObj(id, obj, method, args...) | 异步调用实例方法 |

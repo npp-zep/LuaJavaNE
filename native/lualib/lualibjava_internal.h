@@ -38,6 +38,7 @@ extern void dispatch_callback(lua_State* owner, int cbRef, const char* result); 
 extern int luaopen_java(lua_State* L);
 extern int new_java_object_ud(lua_State* L, jobject obj);
 extern jobject java_get_obj(lua_State* L, int idx);
+extern int java_table_dispatch(lua_State* L, jobject obj);   // Map/List → JavaTable，其余 → Java userdata
 extern PromiseEntry* promise_find(int id);   // 调用方须持有 promise_mutex
 extern void promise_remove(PromiseEntry* e); // 调用方须持有 promise_mutex
 

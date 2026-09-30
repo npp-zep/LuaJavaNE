@@ -1,4 +1,16 @@
-## [Unreleased]
+## [2.3.0] - 2026-09-30
+### Added
+- **Bidirectional table interop between Lua and Java** via lazy (live) proxies:
+  - **Lua table → Java**: Java receives Lua tables as a live `LuaTable` reference (`get` / `put` / `size` / `keys`), backed by a `luaL_ref` registry reference so reads and writes go straight to the original table without copying. Changes made from Java are immediately visible in Lua, and vice versa.
+  - **Java Map/List → Lua**: `Map` and `List` returned from Java (or passed as `@LuaFunction` module return values) are wrapped as lazy `JavaTable` userdata with `__index` / `__newindex` / `__len` / `__pairs` metamethods — Lua can read fields, take `#` length, `pairs` / `ipairs` iterate, and write back in place.
+  - **Type-conversion consistency**: tables are now handled at every conversion point — function/`@LuaFunction` arguments and return values, `LuaRuntime.callFunction*`, and overload scoring (`lua_score_with_class` prioritizes `LuaTable` for tables, and `Map`/`Collection` interfaces for container args).
+- **JUnit tests**: `TableBridgeTest` (11 cases) covering both directions — Java reading/traversing/mutating Lua tables live-referenced, and Lua reading/`#`/iterating/writing Java `Map`/`List` lazily. Registered in `make test`.
+
+### Fixed
+- **JVM SIGSEGV when iterating Java `Map`/`List` from Lua**: `lua_pushcclosure(L, -3, 2)` passed a stack *index* as the C-function pointer, so `pairs`/`ipairs` crashed during iteration. Now pushes the actual closure function.
+- **`pairs` over Java `Map` returned stale keys on repeat**: the generic-for `control` value (a string key) was reused as iteration state on the 2nd+ pass; iteration now uses the upvalue ordinal cursor instead of depending on `control`.
+- **`#` / `ipairs` on a Java `List` raised on out-of-bounds access**: iteration termination relies on `t[size+1]` hitting the end; the list indexer now returns `nil` for OOB instead of throwing, so exact ranges and `ipairs` terminate cleanly.
+- **`@LuaFunction`/`@LuaModule` methods returning `Map`/`List` produced opaque userdata**: the callback return path now routes non-primitive results through `java_table_dispatch`, wrapping containers as `JavaTable` (previously only `new_java_object_ud`), consistent with argument conversion.
 
 ## [2.2.7] - 2026-09-05
 ### Added
