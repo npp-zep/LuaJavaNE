@@ -144,6 +144,8 @@ strArr[1] = "b"
 
 **行为统一**：Java 方法返回的数组（如 `String[]`、`int[]`）与 `java.newArray` 创建的数组使用完全相同的 `Java.Array` 包装，同样支持 0 基索引、`#` 长度和元素读写。元素读取时：`int`/`double`/`boolean` 基本类型转为对应的 Lua 值，`String` 转为 Lua 字符串，其他对象元素包装为 Java 对象 userdata。
 
+**错误处理**：`长度` 为负数时返回 `nil` 与 `array size must be >= 0`；不支持的 `类型名` 返回 `nil` 与 `unsupported array type: 类型名`。
+
 ---
 
 ## 8. Table 双向互调（Lua ↔ Java）
@@ -232,6 +234,8 @@ print(proxy(3))      -- 等价 proxy:call(3)
 ## 9. 动态代理（Lua 表实现 Java 接口）
 
 使用 `java.createProxy({接口名列表}, handler表)` 创建 Java 代理对象，其中 `handler` 表需包含对应接口方法的 Lua 函数。接口方法被调用时派发到 handler 表中**同名（区分大小写）**的 Lua 函数，第一个参数 `self` 为 handler 表。
+
+**错误处理**：`接口名列表` 必须是**非空**的字符串数组——列表为空（含误把 `handler` 表当第一个参数传入，即 `java.createProxy(handler, {接口...})`）时返回 `nil` 与 `invalid interface list ...` 错误信息；接口名不是字符串时返回 `interface name at index N is not a string`；接口类不存在时返回 `interface not found: 类名`。以上错误均以 `nil + 错误信息` 的形式返回，不会导致进程崩溃。
 
 ```lua
 local ran = false

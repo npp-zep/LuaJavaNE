@@ -1738,15 +1738,51 @@ static int java_createProxy(lua_State* L) {
     lua_pop(L, 1);
 
     // 读取接口名数组
-    int nInterfaces = luaL_len(L, 1);
+    int nInterfaces = (int)luaL_len(L, 1);
+
+    // 防御：接口列表不能为空，否则后续 GetObjectArrayElement(ifaceArray, 0)
+    // 会对空数组越界并解引用 NULL，导致段错误。常见误用是把接口列表和
+    // handler 表两个参数传反（应为 java.createProxy({接口...}, handler)）。
+    if (nInterfaces <= 0) {
+        if (luaL_len(L, 2) > 0) {
+            lua_pushnil(L);
+            lua_pushstring(L,
+                "invalid interface list (argument 1 is empty): "
+                "expected java.createProxy({interface...}, handler)");
+        } else {
+            lua_pushnil(L);
+            lua_pushstring(L,
+                "invalid interface list: argument 1 must be a non-empty array of interface names");
+        }
+        return 2;
+    }
 
     jclass clsCls = (*env)->FindClass(env, "java/lang/Class");
+    if (!clsCls || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        lua_pushnil(L);
+        lua_pushstring(L, "java.lang.Class not found");
+        return 2;
+    }
 
     jobjectArray ifaceArray = (*env)->NewObjectArray(env, nInterfaces, clsCls, NULL);
     (*env)->DeleteLocalRef(env, clsCls);
+    if (!ifaceArray || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        lua_pushnil(L);
+        lua_pushstring(L, "failed to allocate interface array");
+        return 2;
+    }
 
     for (int i = 0; i < nInterfaces; i++) {
         lua_rawgeti(L, 1, i + 1);
+        if (lua_type(L, -1) != LUA_TSTRING) {
+            lua_pop(L, 1);
+            (*env)->DeleteLocalRef(env, ifaceArray);
+            lua_pushnil(L);
+            lua_pushfstring(L, "interface name at index %d is not a string", i);
+            return 2;
+        }
         const char* name = lua_tostring(L, -1);
 
         char* desc = strdup(name);
@@ -1759,11 +1795,18 @@ static int java_createProxy(lua_State* L) {
             (*env)->ExceptionClear(env);
             (*env)->DeleteLocalRef(env, ifaceArray);
             lua_pushnil(L);
-            lua_pushstring(L, "interface not found");
+            lua_pushfstring(L, "interface not found: %s", name);
             return 2;
         }
         (*env)->SetObjectArrayElement(env, ifaceArray, i, iface);
         (*env)->DeleteLocalRef(env, iface);
+    }
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, ifaceArray);
+        lua_pushnil(L);
+        lua_pushstring(L, "failed to fill interface array");
+        return 2;
     }
 
     // 保存 Lua 表到注册表
@@ -1773,28 +1816,112 @@ static int java_createProxy(lua_State* L) {
 
     // 创建 LuaInvocationHandler
     jclass handlerCls = (*env)->FindClass(env, "com/luajava/LuaInvocationHandler");
+    if (!handlerCls || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        luaL_unref(L, LUA_REGISTRYINDEX, tableRef);
+        lua_state_release_ref(L);
+        (*env)->DeleteLocalRef(env, ifaceArray);
+        lua_pushnil(L);
+        lua_pushstring(L, "com.luajava.LuaInvocationHandler not found");
+        return 2;
+    }
 
     jmethodID handlerCtor = (*env)->GetMethodID(env, handlerCls, "<init>", "(JI)V");
+    if (!handlerCtor || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        luaL_unref(L, LUA_REGISTRYINDEX, tableRef);
+        lua_state_release_ref(L);
+        (*env)->DeleteLocalRef(env, handlerCls);
+        (*env)->DeleteLocalRef(env, ifaceArray);
+        lua_pushnil(L);
+        lua_pushstring(L, "LuaInvocationHandler constructor not found");
+        return 2;
+    }
 
     jobject handler = (*env)->NewObject(env, handlerCls, handlerCtor, statePtr, (jint)tableRef);
     (*env)->DeleteLocalRef(env, handlerCls);
+    if (!handler || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        luaL_unref(L, LUA_REGISTRYINDEX, tableRef);
+        lua_state_release_ref(L);
+        (*env)->DeleteLocalRef(env, ifaceArray);
+        lua_pushnil(L);
+        lua_pushstring(L, "failed to create LuaInvocationHandler");
+        return 2;
+    }
 
     // Proxy.newProxyInstance
     jclass proxyCls = (*env)->FindClass(env, "java/lang/reflect/Proxy");
+    if (!proxyCls || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        luaL_unref(L, LUA_REGISTRYINDEX, tableRef);
+        lua_state_release_ref(L);
+        (*env)->DeleteLocalRef(env, handler);
+        (*env)->DeleteLocalRef(env, ifaceArray);
+        lua_pushnil(L);
+        lua_pushstring(L, "java.lang.reflect.Proxy not found");
+        return 2;
+    }
 
     jmethodID newProxy = (*env)->GetStaticMethodID(env, proxyCls,
         "newProxyInstance",
         "(Ljava/lang/ClassLoader;[Ljava/lang/Class;Ljava/lang/reflect/InvocationHandler;)Ljava/lang/Object;");
+    if (!newProxy || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        luaL_unref(L, LUA_REGISTRYINDEX, tableRef);
+        lua_state_release_ref(L);
+        (*env)->DeleteLocalRef(env, handler);
+        (*env)->DeleteLocalRef(env, proxyCls);
+        (*env)->DeleteLocalRef(env, ifaceArray);
+        lua_pushnil(L);
+        lua_pushstring(L, "Proxy.newProxyInstance not found");
+        return 2;
+    }
 
-    // 获取类加载器
+    // 获取类加载器（nInterfaces > 0 已保证接口数组非空）
     jobject firstIface = (*env)->GetObjectArrayElement(env, ifaceArray, 0);
+    if (!firstIface || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        luaL_unref(L, LUA_REGISTRYINDEX, tableRef);
+        lua_state_release_ref(L);
+        (*env)->DeleteLocalRef(env, handler);
+        (*env)->DeleteLocalRef(env, proxyCls);
+        (*env)->DeleteLocalRef(env, ifaceArray);
+        lua_pushnil(L);
+        lua_pushstring(L, "failed to read first interface");
+        return 2;
+    }
 
     jclass ifaceCls = (*env)->GetObjectClass(env, firstIface);
+    if (!ifaceCls || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        luaL_unref(L, LUA_REGISTRYINDEX, tableRef);
+        lua_state_release_ref(L);
+        (*env)->DeleteLocalRef(env, firstIface);
+        (*env)->DeleteLocalRef(env, handler);
+        (*env)->DeleteLocalRef(env, proxyCls);
+        (*env)->DeleteLocalRef(env, ifaceArray);
+        lua_pushnil(L);
+        lua_pushstring(L, "failed to resolve interface class");
+        return 2;
+    }
 
     jmethodID getClassLoader = (*env)->GetMethodID(env, ifaceCls, "getClassLoader", "()Ljava/lang/ClassLoader;");
+    if (!getClassLoader || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        luaL_unref(L, LUA_REGISTRYINDEX, tableRef);
+        lua_state_release_ref(L);
+        (*env)->DeleteLocalRef(env, ifaceCls);
+        (*env)->DeleteLocalRef(env, firstIface);
+        (*env)->DeleteLocalRef(env, handler);
+        (*env)->DeleteLocalRef(env, proxyCls);
+        (*env)->DeleteLocalRef(env, ifaceArray);
+        lua_pushnil(L);
+        lua_pushstring(L, "getClassLoader not found");
+        return 2;
+    }
 
     jobject classLoader = (*env)->CallObjectMethod(env, firstIface, getClassLoader);
-
     (*env)->DeleteLocalRef(env, ifaceCls);
     (*env)->DeleteLocalRef(env, firstIface);
 
@@ -1811,6 +1938,7 @@ static int java_createProxy(lua_State* L) {
         (*env)->ExceptionDescribe(env);
         (*env)->ExceptionClear(env);
         luaL_unref(L, LUA_REGISTRYINDEX, tableRef);
+        lua_state_release_ref(L);
         lua_pushnil(L);
         lua_pushstring(L, "failed to create proxy");
         return 2;
@@ -1826,6 +1954,14 @@ static int java_newArray(lua_State* L) {
     const char* typeName = luaL_checkstring(L, 1);
     int size = (int)luaL_checkinteger(L, 2);
     JNIEnv* env = getEnv();
+
+    // 防御：负数长度会让 Array.newInstance 抛 NegativeArraySizeException 并返回
+    // NULL，之后 NewGlobalRef(NULL) 与数组访问会崩溃。
+    if (size < 0) {
+        lua_pushnil(L);
+        lua_pushstring(L, "array size must be >= 0");
+        return 2;
+    }
 
     JavaArray* arr = (JavaArray*)lua_newuserdatauv(L, sizeof(JavaArray), 0);
     arr->length = size;

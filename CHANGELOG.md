@@ -1,3 +1,8 @@
+## [Unreleased]
+### Fixed
+- **`java.createProxy` no longer crashes the JVM on malformed input**: the interface-name list is validated before any JNI work — an empty list (including the common mistake of passing the `handler` table first) returns `nil` + `invalid interface list ... expected java.createProxy({interface...}, handler)` instead of dereferencing NULL in `GetObjectClass` (SIGSEGV); non-string interface names report `interface name at index N is not a string`; every JNI step (class lookup, interface-array allocation/fill, `LuaInvocationHandler`/proxy creation, class-loader resolution) is now guarded with NULL/exception checks and fails with a clear Lua error after releasing local refs and the registry reference
+- **`java.newArray` rejects negative sizes**: a negative length made `Array.newInstance` throw `NegativeArraySizeException` and return NULL, later crashing on `NewGlobalRef(NULL)`; it now returns `nil` + `array size must be >= 0`
+
 ## [2.3.1] - 2026-09-30
 ### Added
 - **List append from Lua**: `l[#l + 1] = v` on a Java `List` now appends via `List.add` (indices within `1..#l` still overwrite via `set`, and `table.insert` works as usual)
