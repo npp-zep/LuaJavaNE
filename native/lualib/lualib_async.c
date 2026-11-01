@@ -4,6 +4,7 @@
 #include "lualibjava_internal.h"
 #include <jni.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -152,6 +153,25 @@ static char get_type_hint(lua_State* L, int idx) {
     }
 }
 
+// 把 Lua 参数转成字符串传给 Java，配合 get_type_hint 的类型提示。
+// 数值使用足够精度（整数 %lld、浮点 %.17g），避免 lua_tostring 的精度损失；
+// 布尔转为 "true"/"false"；其他类型按 lua_tostring 处理（表/函数为 ""）。
+static const char* arg_to_string(lua_State* L, int idx, char* buf, size_t bufsz) {
+    if (lua_isinteger(L, idx)) {
+        snprintf(buf, bufsz, "%lld", (long long)lua_tointeger(L, idx));
+        return buf;
+    }
+    if (lua_isnumber(L, idx)) {
+        snprintf(buf, bufsz, "%.17g", (double)lua_tonumber(L, idx));
+        return buf;
+    }
+    if (lua_type(L, idx) == LUA_TBOOLEAN) {
+        return lua_toboolean(L, idx) ? "true" : "false";
+    }
+    const char* s = lua_tostring(L, idx);
+    return s ? s : "";
+}
+
 int java_runAsync(lua_State* L) {
     int pid = (int)luaL_checkinteger(L, 1);
     const char* cls = luaL_checkstring(L, 2);
@@ -178,9 +198,10 @@ int java_runAsync(lua_State* L) {
     jclass strCls = (*env)->FindClass(env, "java/lang/String");
     jobjectArray jargs = (*env)->NewObjectArray(env, pairCount > 0 ? pairCount : 0, strCls, NULL);
     for (int i = 0; i < argCount; i++) {
-        const char* val = lua_tostring(L, 4 + i);
+        char buf[64];
+        const char* val = arg_to_string(L, 4 + i, buf, sizeof(buf));
         char hint[2] = { get_type_hint(L, 4 + i), '\0' };
-        jstring jval = (*env)->NewStringUTF(env, val ? val : "");
+        jstring jval = (*env)->NewStringUTF(env, val);
         jstring jhint = (*env)->NewStringUTF(env, hint);
         (*env)->SetObjectArrayElement(env, jargs, i * 2, jval);
         (*env)->SetObjectArrayElement(env, jargs, i * 2 + 1, jhint);
@@ -229,9 +250,10 @@ int java_runAsyncObj(lua_State* L) {
     jclass strCls = (*env)->FindClass(env, "java/lang/String");
     jobjectArray jargs = (*env)->NewObjectArray(env, pairCount > 0 ? pairCount : 0, strCls, NULL);
     for (int i = 0; i < argCount; i++) {
-        const char* val = lua_tostring(L, 4 + i);
+        char buf[64];
+        const char* val = arg_to_string(L, 4 + i, buf, sizeof(buf));
         char hint[2] = { get_type_hint(L, 4 + i), '\0' };
-        jstring jval = (*env)->NewStringUTF(env, val ? val : "");
+        jstring jval = (*env)->NewStringUTF(env, val);
         jstring jhint = (*env)->NewStringUTF(env, hint);
         (*env)->SetObjectArrayElement(env, jargs, i * 2, jval);
         (*env)->SetObjectArrayElement(env, jargs, i * 2 + 1, jhint);

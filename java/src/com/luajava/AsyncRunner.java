@@ -145,10 +145,17 @@ public class AsyncRunner {
     }
 
     private static Object convert(String v, String hint, Class<?> t) {
-        if (t == String.class || t == Object.class) return v;
+        char h = (hint == null || hint.isEmpty()) ? 'S' : hint.charAt(0);
+        // Object 参数按 Lua 原始类型还原，避免数字/布尔被当作字符串传递
+        if (t == Object.class) return hintedValue(v, h);
+        if (t == String.class) return v;
         try {
-            if (t == int.class || t == Integer.class) return Integer.parseInt(v);
-            if (t == long.class || t == Long.class) return Long.parseLong(v);
+            if (t == int.class || t == Integer.class) {
+                return h == 'D' ? integralFromDouble(v, Integer.class) : Integer.parseInt(v);
+            }
+            if (t == long.class || t == Long.class) {
+                return h == 'D' ? integralFromDouble(v, Long.class) : Long.parseLong(v);
+            }
             if (t == double.class || t == Double.class) return Double.parseDouble(v);
             if (t == float.class || t == Float.class) return Float.parseFloat(v);
             if (t == boolean.class || t == Boolean.class) return Boolean.parseBoolean(v);
@@ -158,6 +165,36 @@ public class AsyncRunner {
                     "cannot convert '" + v + "' to " + t.getSimpleName(), nfe);
         }
         return null;
+    }
+
+    // 依据 Lua 侧类型提示（I/D/Z/S）还原 Object 参数；无法解析时退回原始字符串
+    private static Object hintedValue(String v, char h) {
+        try {
+            switch (h) {
+                case 'I': return Long.parseLong(v);
+                case 'D': return Double.parseDouble(v);
+                case 'Z': return Boolean.parseBoolean(v);
+                default: return v;
+            }
+        } catch (NumberFormatException e) {
+            return v;
+        }
+    }
+
+    // Lua 浮点值传给整数参数时，仅接受无小数部分且在范围内的值
+    private static Number integralFromDouble(String v, Class<?> t) {
+        double d = Double.parseDouble(v);
+        if (d != Math.rint(d)) throw new NumberFormatException("not an integer: " + v);
+        if (t == Integer.class) {
+            if (d < Integer.MIN_VALUE || d > Integer.MAX_VALUE) {
+                throw new NumberFormatException("out of int range: " + v);
+            }
+            return (int) d;
+        }
+        if (d < Long.MIN_VALUE || d > Long.MAX_VALUE) {
+            throw new NumberFormatException("out of long range: " + v);
+        }
+        return (long) d;
     }
 
     // 生成可读的错误描述（类型 + 消息 + 根因链），供 E: 字符串携带诊断信息
