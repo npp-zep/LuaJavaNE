@@ -853,33 +853,6 @@ JNIEXPORT jobject JNICALL Java_com_luajava_LuaInvocationHandler_invokeNative
     return result;
 }
 
-// ========== LuaInvocationHandler.destroyNative ==========
-JNIEXPORT void JNICALL Java_com_luajava_LuaInvocationHandler_destroyNative
-  (JNIEnv* env, jobject obj) {
-    LUA_LOCK();
-
-    jclass cls = (*env)->GetObjectClass(env, obj);
-    jfieldID sf = (*env)->GetFieldID(env, cls, "statePtr", "J");
-    jfieldID rf = (*env)->GetFieldID(env, cls, "tableRef", "I");
-    jlong Lptr = (*env)->GetLongField(env, obj, sf);
-    jint ref = (*env)->GetIntField(env, obj, rf);
-    (*env)->DeleteLocalRef(env, cls);
-
-    if (Lptr != 0 && ref >= 0) {
-        lua_State* L = (lua_State*)(uintptr_t)Lptr;
-        luaL_unref(L, LUA_REGISTRYINDEX, ref);
-        (*env)->SetIntField(env, obj, rf, -1);
-        // 释放该 handler 对状态持有的引用；若为最后一个，则真正关闭状态
-        if (lua_state_release_ref(L)) {
-            java_promise_cleanup_state(L);
-            lua_close(L);
-        }
-    }
-
-    LUA_UNLOCK();
-}
-
-
 // ========== LuaInvocationHandler.destroyNative (static) ==========
 JNIEXPORT void JNICALL Java_com_luajava_LuaInvocationHandler_destroyNative__JI
   (JNIEnv* env, jclass clazz, jlong Lptr, jint ref) {

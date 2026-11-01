@@ -13,6 +13,7 @@ public class LuaInvocationHandler implements InvocationHandler {
     private long statePtr;
     private int tableRef;
     private volatile boolean destroyed;
+    private final Cleaner.Cleanable cleanable;
 
     private static class CleanupTask implements Runnable {
         private final long statePtr;
@@ -39,7 +40,7 @@ public class LuaInvocationHandler implements InvocationHandler {
         this.statePtr = statePtr;
         this.tableRef = tableRef;
         this.destroyed = false;
-        cleaner.register(this, new CleanupTask(statePtr, tableRef));
+        this.cleanable = cleaner.register(this, new CleanupTask(statePtr, tableRef));
     }
 
     @Override
@@ -58,10 +59,9 @@ public class LuaInvocationHandler implements InvocationHandler {
             if (destroyed) {
                 return;
             }
-            if (statePtr != 0 && tableRef >= 0) {
-                destroyNative();
-                tableRef = -1;
-            }
+            // 与 Cleaner 共用同一个 Cleanable：显式 destroy 与 GC 清理最多执行一次
+            cleanable.clean();
+            tableRef = -1;
             destroyed = true;
             statePtr = 0;
         }
@@ -69,6 +69,5 @@ public class LuaInvocationHandler implements InvocationHandler {
 
     // ---------- native methods ----------
     private native Object invokeNative(Object proxy, Method method, Object[] args);
-    private native void destroyNative();
     private static native void destroyNative(long statePtr, int tableRef);
 }
