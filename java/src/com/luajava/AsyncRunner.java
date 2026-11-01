@@ -15,18 +15,28 @@ public class AsyncRunner {
     }
 
     public static String invokeInstance(Object obj, String methodName, String[] args, boolean expandArrays) {
-        try {
-            if (obj == null) return "E:null instance";
-            Class<?> cls = obj.getClass();
-            for (Method m : cls.getMethods()) {
-                if (!m.getName().equals(methodName)) continue;
-                Object[] converted = matchArgs(m.getParameterTypes(), args);
-                if (converted != null) {
-                    Object result = m.invoke(obj, converted);
-                    return serialize(result, expandArrays);
+        if (obj == null) return "E:null instance";
+        Class<?> cls = obj.getClass();
+        Method best = null;
+        Object[] bestArgs = null;
+        int bestScore = Integer.MIN_VALUE;
+        for (Method m : cls.getMethods()) {
+            if (!m.getName().equals(methodName)) continue;
+            Object[] converted = matchArgs(m.getParameterTypes(), args);
+            if (converted != null) {
+                int score = scoreMethodMatch(m.getParameterTypes(), converted);
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = m;
+                    bestArgs = converted;
                 }
             }
-            return "E:no matching method: " + methodName + detail();
+        }
+        if (best == null) return "E:no matching method: " + methodName + detail();
+        try {
+            return serialize(best.invoke(obj, bestArgs), expandArrays);
+        } catch (InvocationTargetException e) {
+            return "E:" + e.getCause();
         } catch (Throwable e) {
             return "E:" + methodName + " failed -> " + describeError(e);
         }
