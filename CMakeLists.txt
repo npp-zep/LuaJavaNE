@@ -60,11 +60,10 @@ endif()
 find_package(JNI REQUIRED)
 include_directories(${JNI_INCLUDE_DIRS})
 
-# ========== 3. Sleef SIMD 库（可选，默认关闭） ==========
-# 说明：clac 使用的是 Sleef 的标量 double API（Sleef_xxx_u10/u35/u15），
-# 它不会自动向量化，实测在 x86 + glibc 上比 libm 慢 1.5~8 倍。
-# 因此默认关闭，需要时用 -DLUAJAVA_ENABLE_SLEEF=ON 显式开启。
-option(LUAJAVA_ENABLE_SLEEF "Enable Sleef scalar math API in clac (slower than libm on x86)" OFF)
+# ========== 3. Sleef SIMD 库（默认启用；x86_64 走 AVX2 4 宽向量 API） ==========
+# 说明：clac 批量数学函数使用 Sleef 的 d4 向量 API（Sleef_xxxd4_u10/u35avx2），
+# 一次处理 4 个 double；仅在 x86+AVX2 下启用向量路径，其余情况回退标量/libm。
+option(LUAJAVA_ENABLE_SLEEF "Enable Sleef AVX2 vector math in clac (falls back to libm)" ON)
 
 set(NATIVE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/native")
 set(SLEEF_DIR "${NATIVE_DIR}/libs/sleef")
@@ -94,13 +93,13 @@ endif()
 
 if(SLEEF_INCLUDE_DIR AND SLEEF_LIBRARY)
     set(USE_SLEEF TRUE)
-    message(STATUS "Sleef enabled (${SLEEF_LIBRARY})")
+    message(STATUS "Sleef enabled (${SLEEF_LIBRARY}), batch math uses AVX2 vector API when available")
 else()
     set(USE_SLEEF FALSE)
     if(LUAJAVA_ENABLE_SLEEF)
         message(STATUS "Sleef requested but not found (headers and library required), clac will use libm")
     else()
-        message(STATUS "Sleef disabled (default), clac will use libm")
+        message(STATUS "Sleef disabled, clac will use libm")
     endif()
 endif()
 
