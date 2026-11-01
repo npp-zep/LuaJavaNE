@@ -286,6 +286,8 @@ end
 ### `LuaAgent.getObject(int id)` / `registerObject(Object obj)`
 管理对象池，用于跨任务传递 Java 对象。
 
+未被 `getObject` 取走的异步结果按 FIFO 保留最近 **10,000** 个，超出后自动释放；被释放的 ID 再调用 `java.getObject` 返回 `nil`。`unregisterObject(id)` 会同时释放弱引用与强引用。
+
 ---
 
 ## 注意事项

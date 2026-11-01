@@ -259,6 +259,8 @@ local d = clac.batch_sin(a)     -- 逐元素求正弦
 | 特殊函数 | batch_erf, batch_erfc, batch_tgamma, batch_lgamma |
 | 其他 | batch_sqrt, batch_cbrt, batch_pow, batch_atan2, batch_hypot |
 
+批量运算在数组长度 ≥ 4096 时自动启用 OpenMP 多线程（`OMP_NUM_THREADS` 可调）；数学函数使用 Sleef AVX2 向量内核（`batch_sqrt`/`batch_abs` 直接使用硬件指令），尾部元素与不支持 AVX2 的环境自动回退标量，结果一致。
+
 ---
 
 ## Utils 高精度工具库
@@ -487,6 +489,11 @@ luaj -h                 # 帮助
 ## 构建
 
 要求：JDK 17+、CMake 3.14+、GCC/Clang、pthread。
+
+可选依赖（缺失时自动回退，不影响构建）：
+
+- **OpenMP** — `clac` 批量运算多线程（GCC 自带 `libgomp`）
+- **Sleef** — `clac` 批量数学的 AVX2 向量内核（需同时具备 `sleef.h` 与 `libsleef`，`-DLUAJAVA_ENABLE_SLEEF=OFF` 可关闭）
 
 ~~~bash
 git clone https://github.com/npp-zep/LuaJavaNE.git

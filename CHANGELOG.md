@@ -1,5 +1,18 @@
 ## [Unreleased]
+### Added
+- **OpenMP batch parallelism**: `clac` batch functions now run `omp parallel for` for arrays of 4096+ elements, tunable with `OMP_NUM_THREADS`. On 8 cores, 2M-element `batch_sin` drops from ~0.24 s to ~0.12 s. Builds without OpenMP run serially.
+- **Sleef AVX2 vector kernels for batch math**: batch functions now use Sleef `d4` AVX2 vector routines (28 symbols) instead of scalar math; `batch_sqrt`/`batch_abs` use the hardware `sqrtpd`/`vandpd` instructions directly. Array tails and hosts without AVX2 automatically fall back to scalar/libm.
+
+### Changed
+- **Sleef detection requires headers *and* a linkable library**: header-only detection could enable Sleef without a `libsleef` to link against (undefined symbols at load time), and the old scalar `Sleef_*_f64` names produced implicit declarations. CMake now pairs the header with the library (vendored or system) and otherwise compiles without it; `-DLUAJAVA_ENABLE_SLEEF=OFF` opts out explicitly.
+- Batch math results are unchanged numerically (verified over array sizes 3–8191 for every SIMD-vectorized batch function, relative error ≤ 1e-12).
+
+### Removed
+- **Unused legacy JNI entry points** (−248 lines): `LuaRuntime.registerJavaMethod`, `LuaPromise.complete`, `LuaPromise.resumeExceptionally`, `LuaRuntime._newAgentState`, plus their only helper `JavaMethodBinding`/`java_method_callback`. None had Java-side declarations or callers.
+
 ### Fixed
+- **Double release of a proxy handler's Lua registry reference**: `LuaInvocationHandler.destroy()` released `statePtr`/`tableRef` while `Cleaner` retained the same values and released them again at GC time (double `luaL_unref` + `lua_state_release_ref`, risking premature `lua_close`). Both paths now share one `Cleaner.Cleanable`, which executes at most once.
+- **Unbounded growth of the async result pin pool**: every non-primitive async result was strongly referenced in `LuaAgent.pinnedObjects` until fetched, so ignored results leaked JVM object graphs forever; `unregisterObject` also failed to drop the strong reference. The pool is now FIFO-capped at 10,000 entries, and unregister/get release pins correctly.
 - **`java.createProxy` no longer crashes the JVM on malformed input**: the interface-name list is validated before any JNI work — an empty list (including the common mistake of passing the `handler` table first) returns `nil` + `invalid interface list ... expected java.createProxy({interface...}, handler)` instead of dereferencing NULL in `GetObjectClass` (SIGSEGV); non-string interface names report `interface name at index N is not a string`; every JNI step (class lookup, interface-array allocation/fill, `LuaInvocationHandler`/proxy creation, class-loader resolution) is now guarded with NULL/exception checks and fails with a clear Lua error after releasing local refs and the registry reference
 - **`java.newArray` rejects negative sizes**: a negative length made `Array.newInstance` throw `NegativeArraySizeException` and return NULL, later crashing on `NewGlobalRef(NULL)`; it now returns `nil` + `array size must be >= 0`
 
