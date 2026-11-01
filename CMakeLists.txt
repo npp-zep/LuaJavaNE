@@ -60,25 +60,58 @@ endif()
 find_package(JNI REQUIRED)
 include_directories(${JNI_INCLUDE_DIRS})
 
-# ========== 3. Sleef SIMD 库（头文件只有，不需要链接） ==========
+# ========== 3. Sleef SIMD 库（可选，默认关闭） ==========
+# 说明：clac 使用的是 Sleef 的标量 double API（Sleef_xxx_u10/u35/u15），
+# 它不会自动向量化，实测在 x86 + glibc 上比 libm 慢 1.5~8 倍。
+# 因此默认关闭，需要时用 -DLUAJAVA_ENABLE_SLEEF=ON 显式开启。
+option(LUAJAVA_ENABLE_SLEEF "Enable Sleef scalar math API in clac (slower than libm on x86)" OFF)
+
 set(NATIVE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/native")
 set(SLEEF_DIR "${NATIVE_DIR}/libs/sleef")
 
-if(EXISTS "${SLEEF_DIR}/sleef.h")
-    set(USE_SLEEF TRUE)
-    message(STATUS "Sleef found, enabling SIMD acceleration in clac")
-else()
-    set(USE_SLEEF FALSE)
-    message(STATUS "Sleef not found, clac will use fallback scalar loops")
+set(SLEEF_INCLUDE_DIR "")
+set(SLEEF_LIBRARY "")
+
+if(LUAJAVA_ENABLE_SLEEF)
+    # 3.1 优先使用仓库内自带的头文件 + 同目录库（版本严格匹配）
+    find_library(SLEEF_VENDORED_LIBRARY NAMES sleef libsleef
+        PATHS "${SLEEF_DIR}" NO_DEFAULT_PATH)
+    if(SLEEF_VENDORED_LIBRARY AND EXISTS "${SLEEF_DIR}/sleef.h")
+        set(SLEEF_INCLUDE_DIR "${SLEEF_DIR}")
+        set(SLEEF_LIBRARY "${SLEEF_VENDORED_LIBRARY}")
+    endif()
+
+    # 3.2 否则使用系统安装的 Sleef（头文件与库成对出现）
+    if(NOT SLEEF_LIBRARY)
+        find_path(SLEEF_SYSTEM_INCLUDE_DIR NAMES sleef.h)
+        find_library(SLEEF_SYSTEM_LIBRARY NAMES sleef libsleef)
+        if(SLEEF_SYSTEM_INCLUDE_DIR AND SLEEF_SYSTEM_LIBRARY)
+            set(SLEEF_INCLUDE_DIR "${SLEEF_SYSTEM_INCLUDE_DIR}")
+            set(SLEEF_LIBRARY "${SLEEF_SYSTEM_LIBRARY}")
+        endif()
+    endif()
 endif()
 
-# ========== 4. 查找 OpenMP（备选加速方案） ==========
+if(SLEEF_INCLUDE_DIR AND SLEEF_LIBRARY)
+    set(USE_SLEEF TRUE)
+    message(STATUS "Sleef enabled (${SLEEF_LIBRARY})")
+else()
+    set(USE_SLEEF FALSE)
+    if(LUAJAVA_ENABLE_SLEEF)
+        message(STATUS "Sleef requested but not found (headers and library required), clac will use libm")
+    else()
+        message(STATUS "Sleef disabled (default), clac will use libm")
+    endif()
+endif()
+
+# ========== 4. 查找 OpenMP（批量运算并行加速，可与 Sleef 叠加） ==========
 find_package(OpenMP)
-if(OpenMP_C_FOUND AND NOT USE_SLEEF)
+if(OpenMP_C_FOUND)
     set(USE_OPENMP TRUE)
-    message(STATUS "OpenMP found, using as fallback SIMD")
+    message(STATUS "OpenMP found, batch operations will use parallel loops")
 else()
     set(USE_OPENMP FALSE)
+    message(STATUS "OpenMP not found, batch operations will run serially")
 endif()
 
 # ========== 5. 定义版本宏 ==========
@@ -103,10 +136,11 @@ target_include_directories(luajava PRIVATE
     ${JNI_INCLUDE_DIRS}
 )
 
-# 添加 Sleef 头文件路径
+# 添加 Sleef 头文件路径并链接 Sleef 库
 if(USE_SLEEF)
-    target_include_directories(luajava PRIVATE "${SLEEF_DIR}")
+    target_include_directories(luajava PRIVATE "${SLEEF_INCLUDE_DIR}")
     target_compile_definitions(luajava PRIVATE CLAC_USE_SLEEF)
+    target_link_libraries(luajava PRIVATE ${SLEEF_LIBRARY})
 endif()
 
 target_link_libraries(luajava PRIVATE lua ${JNI_LIBRARIES} dl)
@@ -136,13 +170,11 @@ set_target_properties(luajava PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # ========== 8. 编译选项 ==========
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
     target_compile_options(luajava PRIVATE -O3)
-    # 如果使用 Sleef，启用对应的 SIMD 指令集
-    if(USE_SLEEF)
-        if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-            target_compile_options(luajava PRIVATE -march=armv8-a+fp+simd)
-        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
-            target_compile_options(luajava PRIVATE -mavx2 -mfma -mf16c)
-        endif()
+    # 手工 SIMD 四则运算路径依赖目标架构指令集，与 Sleef 是否启用无关
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        target_compile_options(luajava PRIVATE -march=armv8-a+fp+simd)
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
+        target_compile_options(luajava PRIVATE -mavx2 -mfma -mf16c)
     endif()
 endif()
 

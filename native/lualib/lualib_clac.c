@@ -9,14 +9,77 @@
 #include <stdint.h>
 
 // ========== Sleef SIMD 加速 ==========
+// Sleef 只提供部分标量 double 函数（Sleef_xxx_u10/u35/u15）；未提供的函数
+// 必须回退到 <math.h>，否则会出现隐式声明并在加载共享库时因符号缺失而失败。
+#ifdef CLAC_USE_SLEEF
 #include <sleef.h>
 
-#ifdef USE_SLEEF
-#define MATH_FUNC_UNARY(func, x)   Sleef_##func##_f64(x)
-#define MATH_FUNC_BINARY(func, x, y) Sleef_##func##_f64(x, y)
+#define MATH_FUNC_UNARY(func, x)      CLAC_SLEEF_U_##func(x)
+#define MATH_FUNC_BINARY(func, x, y)  CLAC_SLEEF_B_##func(x, y)
+
+// 一元：Sleef 提供标量版本
+#define CLAC_SLEEF_U_sqrt(x)       Sleef_sqrt_u35(x)
+#define CLAC_SLEEF_U_cbrt(x)       Sleef_cbrt_u10(x)
+#define CLAC_SLEEF_U_exp(x)        Sleef_exp_u10(x)
+#define CLAC_SLEEF_U_exp2(x)       Sleef_exp2_u10(x)
+#define CLAC_SLEEF_U_expm1(x)      Sleef_expm1_u10(x)
+#define CLAC_SLEEF_U_log(x)        Sleef_log_u10(x)
+#define CLAC_SLEEF_U_log10(x)      Sleef_log10_u10(x)
+#define CLAC_SLEEF_U_log2(x)       Sleef_log2_u10(x)
+#define CLAC_SLEEF_U_log1p(x)      Sleef_log1p_u10(x)
+#define CLAC_SLEEF_U_sin(x)        Sleef_sin_u10(x)
+#define CLAC_SLEEF_U_cos(x)        Sleef_cos_u10(x)
+#define CLAC_SLEEF_U_tan(x)        Sleef_tan_u10(x)
+#define CLAC_SLEEF_U_asin(x)       Sleef_asin_u10(x)
+#define CLAC_SLEEF_U_acos(x)       Sleef_acos_u10(x)
+#define CLAC_SLEEF_U_atan(x)       Sleef_atan_u10(x)
+#define CLAC_SLEEF_U_sinh(x)       Sleef_sinh_u10(x)
+#define CLAC_SLEEF_U_cosh(x)       Sleef_cosh_u10(x)
+#define CLAC_SLEEF_U_tanh(x)       Sleef_tanh_u10(x)
+#define CLAC_SLEEF_U_asinh(x)      Sleef_asinh_u10(x)
+#define CLAC_SLEEF_U_acosh(x)      Sleef_acosh_u10(x)
+#define CLAC_SLEEF_U_atanh(x)      Sleef_atanh_u10(x)
+#define CLAC_SLEEF_U_erf(x)        Sleef_erf_u10(x)
+#define CLAC_SLEEF_U_erfc(x)       Sleef_erfc_u15(x)
+#define CLAC_SLEEF_U_tgamma(x)     Sleef_tgamma_u10(x)
+#define CLAC_SLEEF_U_lgamma(x)     Sleef_lgamma_u10(x)
+
+// 一元：Sleef 无标量版本，回退 libm
+#define CLAC_SLEEF_U_fabs(x)       fabs(x)
+#define CLAC_SLEEF_U_floor(x)      floor(x)
+#define CLAC_SLEEF_U_ceil(x)       ceil(x)
+#define CLAC_SLEEF_U_round(x)      round(x)
+#define CLAC_SLEEF_U_trunc(x)      trunc(x)
+#define CLAC_SLEEF_U_rint(x)       rint(x)
+#define CLAC_SLEEF_U_nearbyint(x)  nearbyint(x)
+#define CLAC_SLEEF_U_logb(x)       logb(x)
+
+// 二元：Sleef 提供标量版本
+#define CLAC_SLEEF_B_pow(x, y)      Sleef_pow_u10(x, y)
+#define CLAC_SLEEF_B_atan2(x, y)    Sleef_atan2_u10(x, y)
+#define CLAC_SLEEF_B_hypot(x, y)    Sleef_hypot_u35(x, y)
+
+// 二元：Sleef 无标量版本，回退 libm
+#define CLAC_SLEEF_B_copysign(x, y) copysign(x, y)
+#define CLAC_SLEEF_B_fmod(x, y)     fmod(x, y)
+#define CLAC_SLEEF_B_remainder(x, y) remainder(x, y)
+#define CLAC_SLEEF_B_nextafter(x, y) nextafter(x, y)
+#define CLAC_SLEEF_B_fmax(x, y)     fmax(x, y)
+#define CLAC_SLEEF_B_fmin(x, y)     fmin(x, y)
+#define CLAC_SLEEF_B_fdim(x, y)     fdim(x, y)
 #else
 #define MATH_FUNC_UNARY(func, x)   func(x)
 #define MATH_FUNC_BINARY(func, x, y) func(x, y)
+#endif
+
+// ========== OpenMP 批量并行加速 ==========
+#if defined(CLAC_USE_OPENMP)
+  #include <omp.h>
+  // 小数组的并行调度开销可能超过收益，故仅在元素数 >= 4096 时启用多线程。
+  // 展开为 _Pragma，可直接置于各批量函数的 for 循环之前。
+  #define CLAC_OMP_PARALLEL_FOR _Pragma("omp parallel for schedule(static) if(n >= 4096)")
+#else
+  #define CLAC_OMP_PARALLEL_FOR
 #endif
 
 /* ========== 可移植常量 ========== */
@@ -139,22 +202,29 @@ static int clac_batch_add(lua_State *L) {
     ClacArray *b = (ClacArray*)luaL_checkudata(L, 2, CLAC_ARRAY_META);
     PREPARE_BATCH_RESULT(a, b);
     #if CLAC_SIMD_AVX
-        int i = 0;
-        for (; i <= n - 4; i += 4) {
-            __m256d va = _mm256_loadu_pd(da + i);
-            __m256d vb = _mm256_loadu_pd(db + i);
-            _mm256_storeu_pd(dc + i, _mm256_add_pd(va, vb));
+        CLAC_OMP_PARALLEL_FOR
+        for (int i = 0; i < n; i += 4) {
+            if (i + 3 < n) {
+                __m256d va = _mm256_loadu_pd(da + i);
+                __m256d vb = _mm256_loadu_pd(db + i);
+                _mm256_storeu_pd(dc + i, _mm256_add_pd(va, vb));
+            } else {
+                for (int j = i; j < n; j++) dc[j] = da[j] + db[j];
+            }
         }
-        for (; i < n; i++) dc[i] = da[i] + db[i];
     #elif CLAC_SIMD_SSE2
-        int i = 0;
-        for (; i <= n - 2; i += 2) {
-            __m128d va = _mm_loadu_pd(da + i);
-            __m128d vb = _mm_loadu_pd(db + i);
-            _mm_storeu_pd(dc + i, _mm_add_pd(va, vb));
+        CLAC_OMP_PARALLEL_FOR
+        for (int i = 0; i < n; i += 2) {
+            if (i + 1 < n) {
+                __m128d va = _mm_loadu_pd(da + i);
+                __m128d vb = _mm_loadu_pd(db + i);
+                _mm_storeu_pd(dc + i, _mm_add_pd(va, vb));
+            } else {
+                for (int j = i; j < n; j++) dc[j] = da[j] + db[j];
+            }
         }
-        for (; i < n; i++) dc[i] = da[i] + db[i];
     #else
+        CLAC_OMP_PARALLEL_FOR
         for (int i = 0; i < n; i++) dc[i] = da[i] + db[i];
     #endif
     return 1;
@@ -165,22 +235,29 @@ static int clac_batch_sub(lua_State *L) {
     ClacArray *b = (ClacArray*)luaL_checkudata(L, 2, CLAC_ARRAY_META);
     PREPARE_BATCH_RESULT(a, b);
     #if CLAC_SIMD_AVX
-        int i = 0;
-        for (; i <= n - 4; i += 4) {
-            __m256d va = _mm256_loadu_pd(da + i);
-            __m256d vb = _mm256_loadu_pd(db + i);
-            _mm256_storeu_pd(dc + i, _mm256_sub_pd(va, vb));
+        CLAC_OMP_PARALLEL_FOR
+        for (int i = 0; i < n; i += 4) {
+            if (i + 3 < n) {
+                __m256d va = _mm256_loadu_pd(da + i);
+                __m256d vb = _mm256_loadu_pd(db + i);
+                _mm256_storeu_pd(dc + i, _mm256_sub_pd(va, vb));
+            } else {
+                for (int j = i; j < n; j++) dc[j] = da[j] - db[j];
+            }
         }
-        for (; i < n; i++) dc[i] = da[i] - db[i];
     #elif CLAC_SIMD_SSE2
-        int i = 0;
-        for (; i <= n - 2; i += 2) {
-            __m128d va = _mm_loadu_pd(da + i);
-            __m128d vb = _mm_loadu_pd(db + i);
-            _mm_storeu_pd(dc + i, _mm_sub_pd(va, vb));
+        CLAC_OMP_PARALLEL_FOR
+        for (int i = 0; i < n; i += 2) {
+            if (i + 1 < n) {
+                __m128d va = _mm_loadu_pd(da + i);
+                __m128d vb = _mm_loadu_pd(db + i);
+                _mm_storeu_pd(dc + i, _mm_sub_pd(va, vb));
+            } else {
+                for (int j = i; j < n; j++) dc[j] = da[j] - db[j];
+            }
         }
-        for (; i < n; i++) dc[i] = da[i] - db[i];
     #else
+        CLAC_OMP_PARALLEL_FOR
         for (int i = 0; i < n; i++) dc[i] = da[i] - db[i];
     #endif
     return 1;
@@ -191,22 +268,29 @@ static int clac_batch_mul(lua_State *L) {
     ClacArray *b = (ClacArray*)luaL_checkudata(L, 2, CLAC_ARRAY_META);
     PREPARE_BATCH_RESULT(a, b);
     #if CLAC_SIMD_AVX
-        int i = 0;
-        for (; i <= n - 4; i += 4) {
-            __m256d va = _mm256_loadu_pd(da + i);
-            __m256d vb = _mm256_loadu_pd(db + i);
-            _mm256_storeu_pd(dc + i, _mm256_mul_pd(va, vb));
+        CLAC_OMP_PARALLEL_FOR
+        for (int i = 0; i < n; i += 4) {
+            if (i + 3 < n) {
+                __m256d va = _mm256_loadu_pd(da + i);
+                __m256d vb = _mm256_loadu_pd(db + i);
+                _mm256_storeu_pd(dc + i, _mm256_mul_pd(va, vb));
+            } else {
+                for (int j = i; j < n; j++) dc[j] = da[j] * db[j];
+            }
         }
-        for (; i < n; i++) dc[i] = da[i] * db[i];
     #elif CLAC_SIMD_SSE2
-        int i = 0;
-        for (; i <= n - 2; i += 2) {
-            __m128d va = _mm_loadu_pd(da + i);
-            __m128d vb = _mm_loadu_pd(db + i);
-            _mm_storeu_pd(dc + i, _mm_mul_pd(va, vb));
+        CLAC_OMP_PARALLEL_FOR
+        for (int i = 0; i < n; i += 2) {
+            if (i + 1 < n) {
+                __m128d va = _mm_loadu_pd(da + i);
+                __m128d vb = _mm_loadu_pd(db + i);
+                _mm_storeu_pd(dc + i, _mm_mul_pd(va, vb));
+            } else {
+                for (int j = i; j < n; j++) dc[j] = da[j] * db[j];
+            }
         }
-        for (; i < n; i++) dc[i] = da[i] * db[i];
     #else
+        CLAC_OMP_PARALLEL_FOR
         for (int i = 0; i < n; i++) dc[i] = da[i] * db[i];
     #endif
     return 1;
@@ -217,22 +301,29 @@ static int clac_batch_div(lua_State *L) {
     ClacArray *b = (ClacArray*)luaL_checkudata(L, 2, CLAC_ARRAY_META);
     PREPARE_BATCH_RESULT(a, b);
     #if CLAC_SIMD_AVX
-        int i = 0;
-        for (; i <= n - 4; i += 4) {
-            __m256d va = _mm256_loadu_pd(da + i);
-            __m256d vb = _mm256_loadu_pd(db + i);
-            _mm256_storeu_pd(dc + i, _mm256_div_pd(va, vb));
+        CLAC_OMP_PARALLEL_FOR
+        for (int i = 0; i < n; i += 4) {
+            if (i + 3 < n) {
+                __m256d va = _mm256_loadu_pd(da + i);
+                __m256d vb = _mm256_loadu_pd(db + i);
+                _mm256_storeu_pd(dc + i, _mm256_div_pd(va, vb));
+            } else {
+                for (int j = i; j < n; j++) dc[j] = da[j] / db[j];
+            }
         }
-        for (; i < n; i++) dc[i] = da[i] / db[i];
     #elif CLAC_SIMD_SSE2
-        int i = 0;
-        for (; i <= n - 2; i += 2) {
-            __m128d va = _mm_loadu_pd(da + i);
-            __m128d vb = _mm_loadu_pd(db + i);
-            _mm_storeu_pd(dc + i, _mm_div_pd(va, vb));
+        CLAC_OMP_PARALLEL_FOR
+        for (int i = 0; i < n; i += 2) {
+            if (i + 1 < n) {
+                __m128d va = _mm_loadu_pd(da + i);
+                __m128d vb = _mm_loadu_pd(db + i);
+                _mm_storeu_pd(dc + i, _mm_div_pd(va, vb));
+            } else {
+                for (int j = i; j < n; j++) dc[j] = da[j] / db[j];
+            }
         }
-        for (; i < n; i++) dc[i] = da[i] / db[i];
     #else
+        CLAC_OMP_PARALLEL_FOR
         for (int i = 0; i < n; i++) dc[i] = da[i] / db[i];
     #endif
     return 1;
@@ -249,6 +340,7 @@ static int clac_batch_##name(lua_State *L) { \
     double* __restrict da = a->data; \
     double* __restrict dc = c->data; \
     int n = a->len; \
+    CLAC_OMP_PARALLEL_FOR \
     for (int i = 0; i < n; i++) { \
         dc[i] = MATH_FUNC_UNARY(func, da[i]); \
     } \
@@ -269,6 +361,7 @@ static int clac_batch_##name(lua_State *L) { \
     double* __restrict db = b->data; \
     double* __restrict dc = c->data; \
     int n = a->len; \
+    CLAC_OMP_PARALLEL_FOR \
     for (int i = 0; i < n; i++) { \
         dc[i] = MATH_FUNC_BINARY(func, da[i], db[i]); \
     } \
@@ -324,6 +417,7 @@ static int clac_batch_deg(lua_State *L) {
     double* __restrict da = a->data;
     double* __restrict dc = c->data;
     int n = a->len;
+    CLAC_OMP_PARALLEL_FOR
     for (int i = 0; i < n; i++) {
         dc[i] = da[i] * 180.0 / M_PI;
     }
@@ -339,6 +433,7 @@ static int clac_batch_rad(lua_State *L) {
     double* __restrict da = a->data;
     double* __restrict dc = c->data;
     int n = a->len;
+    CLAC_OMP_PARALLEL_FOR
     for (int i = 0; i < n; i++) {
         dc[i] = da[i] * M_PI / 180.0;
     }
