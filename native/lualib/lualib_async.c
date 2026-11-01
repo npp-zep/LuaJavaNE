@@ -21,26 +21,29 @@ static int push_parsed_result(lua_State* L, const char* r) {
     if (!r || !r[0]) return pushed;
     switch (r[0]) {
         case 'M': {
-            int count = atoi(r + 1);
-            char* p = strchr(r, '|');
+            // 格式：M:<count>|<type>:<len>:<payload>...
+            // 每个元素带长度前缀，字符串中可安全包含 ':' 或 '|'。
+            int count = atoi(r + 2);   // 跳过 "M:"
+            const char* p = strchr(r, '|');
             if (!p) { lua_pushnil(L); pushed = 1; break; }
             p++;
             for (int i = 0; i < count && p && *p; i++) {
                 char type = *p;
-                char* val = p + 2;
-                char* end = strchr(p, '|');
-                size_t len = end ? (size_t)(end - val) : strlen(val);
+                p += 2;                 // 跳过 "<type>:"
+                int len = 0;
+                while (*p >= '0' && *p <= '9') { len = len * 10 + (*p - '0'); p++; }
+                if (*p == ':') p++;
                 switch (type) {
-                    case 'S': lua_pushlstring(L, val, len); break;
-                    case 'I': { char buf[32]; memcpy(buf, val, len); buf[len]='\0'; lua_pushinteger(L, atoll(buf)); break; }
-                    case 'N': { char buf[64]; memcpy(buf, val, len); buf[len]='\0'; lua_pushnumber(L, atof(buf)); break; }
-                    case 'B': lua_pushboolean(L, (len == 4 && memcmp(val, "true", 4)==0) || (len == 1 && *val == '1')); break;
+                    case 'S': lua_pushlstring(L, p, (size_t)len); break;
+                    case 'I': lua_pushinteger(L, (lua_Integer)strtoll(p, NULL, 10)); break;
+                    case 'N': lua_pushnumber(L, (lua_Number)strtod(p, NULL)); break;
+                    case 'B': lua_pushboolean(L, len > 0 && (*p == 't' || *p == '1')); break;
+                    case 'O': lua_pushinteger(L, (lua_Integer)atoi(p)); break;
                     case 'X': lua_pushnil(L); break;
                     default: lua_pushnil(L);
                 }
                 pushed++;
-                p = end;
-                if (p) p++;
+                p += len;
             }
             break;
         }
@@ -157,12 +160,18 @@ int java_runAsync(lua_State* L) {
     int argCount = lua_gettop(L) - 3;
     int pairCount = argCount * 2;
 
+    int expand = 0;
+    pthread_mutex_lock(&promise_mutex);
+    PromiseEntry* pe = promise_find(pid);
+    if (pe) expand = pe->expandArrays;
+    pthread_mutex_unlock(&promise_mutex);
+
     JNIEnv* env = NULL;
     JNI_ATTACH(g_jvm, env);
     if (!env) return 0;
 
     jclass taskCls = (*env)->FindClass(env, "com/luajava/AgentTask");
-    jmethodID ctor = (*env)->GetMethodID(env, taskCls, "<init>", "(ILjava/lang/String;Ljava/lang/String;[Ljava/lang/String;)V");
+    jmethodID ctor = (*env)->GetMethodID(env, taskCls, "<init>", "(ILjava/lang/String;Ljava/lang/String;[Ljava/lang/String;Z)V");
     jstring jcls = (*env)->NewStringUTF(env, cls);
     jstring jmtd = (*env)->NewStringUTF(env, mtd);
 
@@ -179,7 +188,7 @@ int java_runAsync(lua_State* L) {
         (*env)->DeleteLocalRef(env, jhint);
     }
 
-    jobject task = (*env)->NewObject(env, taskCls, ctor, (jint)pid, jcls, jmtd, jargs);
+    jobject task = (*env)->NewObject(env, taskCls, ctor, (jint)pid, jcls, jmtd, jargs, (jboolean)expand);
     (*env)->DeleteLocalRef(env, jcls);
     (*env)->DeleteLocalRef(env, jmtd);
     (*env)->DeleteLocalRef(env, jargs);
@@ -203,12 +212,18 @@ int java_runAsyncObj(lua_State* L) {
     int argCount = lua_gettop(L) - 3;
     int pairCount = argCount * 2;
 
+    int expand = 0;
+    pthread_mutex_lock(&promise_mutex);
+    PromiseEntry* pe = promise_find(pid);
+    if (pe) expand = pe->expandArrays;
+    pthread_mutex_unlock(&promise_mutex);
+
     JNIEnv* env = NULL;
     JNI_ATTACH(g_jvm, env);
     if (!env) return 0;
 
     jclass taskCls = (*env)->FindClass(env, "com/luajava/AgentTask");
-    jmethodID ctor = (*env)->GetMethodID(env, taskCls, "<init>", "(ILjava/lang/Object;Ljava/lang/String;[Ljava/lang/String;)V");
+    jmethodID ctor = (*env)->GetMethodID(env, taskCls, "<init>", "(ILjava/lang/Object;Ljava/lang/String;[Ljava/lang/String;Z)V");
     jstring jmtd = (*env)->NewStringUTF(env, method);
 
     jclass strCls = (*env)->FindClass(env, "java/lang/String");
@@ -225,7 +240,7 @@ int java_runAsyncObj(lua_State* L) {
     }
 
     jobject jobj = java_get_obj(L, 2);
-    jobject task = (*env)->NewObject(env, taskCls, ctor, (jint)pid, jobj, jmtd, jargs);
+    jobject task = (*env)->NewObject(env, taskCls, ctor, (jint)pid, jobj, jmtd, jargs, (jboolean)expand);
     (*env)->DeleteLocalRef(env, jmtd);
     (*env)->DeleteLocalRef(env, jargs);
     (*env)->DeleteLocalRef(env, taskCls);

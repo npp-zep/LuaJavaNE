@@ -2,6 +2,7 @@ package com.luajava;
 
 import com.luajava.exception.TypeConversionError;
 import java.lang.reflect.*;
+import java.nio.charset.StandardCharsets;
 
 public class AsyncRunner {
 
@@ -10,6 +11,10 @@ public class AsyncRunner {
 
     // 同步调用实例方法（通用 fallback）
     public static String invokeInstance(Object obj, String methodName, String[] args) {
+        return invokeInstance(obj, methodName, args, false);
+    }
+
+    public static String invokeInstance(Object obj, String methodName, String[] args, boolean expandArrays) {
         try {
             if (obj == null) return "E:null instance";
             Class<?> cls = obj.getClass();
@@ -18,7 +23,7 @@ public class AsyncRunner {
                 Object[] converted = matchArgs(m.getParameterTypes(), args);
                 if (converted != null) {
                     Object result = m.invoke(obj, converted);
-                    return serialize(result);
+                    return serialize(result, expandArrays);
                 }
             }
             return "E:no matching method: " + methodName + detail();
@@ -28,17 +33,25 @@ public class AsyncRunner {
     }
 
     public static String runStatic(String className, String methodName, String[] args) {
+        return runStatic(className, methodName, args, false);
+    }
+
+    public static String runStatic(String className, String methodName, String[] args, boolean expandArrays) {
         try {
             Class<?> cls = Class.forName(className);
             if (methodName.equals("new")) return callConstructor(cls, args);
-            return callMethod(cls, null, methodName, args);
+            return callMethod(cls, null, methodName, args, expandArrays);
         } catch (Throwable e) {
             return "E:" + className + "." + methodName + " -> " + describeError(e);
         }
     }
 
     public static String runInstance(Object instance, String methodName, String[] args) {
-        return invokeInstance(instance, methodName, args);
+        return invokeInstance(instance, methodName, args, false);
+    }
+
+    public static String runInstance(Object instance, String methodName, String[] args, boolean expandArrays) {
+        return invokeInstance(instance, methodName, args, expandArrays);
     }
 
     private static String callConstructor(Class<?> cls, String[] pairs) throws Exception {
@@ -66,7 +79,7 @@ public class AsyncRunner {
         }
     }
 
-    private static String callMethod(Class<?> cls, Object obj, String name, String[] pairs) throws Exception {
+    private static String callMethod(Class<?> cls, Object obj, String name, String[] pairs, boolean expandArrays) throws Exception {
         Method best = null;
         Object[] bestArgs = null;
         int bestScore = Integer.MIN_VALUE;
@@ -84,7 +97,7 @@ public class AsyncRunner {
         }
         if (best == null) return "E:no matching method: " + name + detail();
         try {
-            return serialize(best.invoke(obj, bestArgs));
+            return serialize(best.invoke(obj, bestArgs), expandArrays);
         } catch (InvocationTargetException e) {
             return "E:" + e.getCause();
         }
@@ -165,6 +178,29 @@ public class AsyncRunner {
     }
 
     private static String serialize(Object obj) {
+        return serialize(obj, false);
+    }
+
+    // expandArrays 为 true 时把 Object[] 展开成 M: 多值协议，否则按单个对象注册到对象池。
+    private static String serialize(Object obj, boolean expandArrays) {
+        if (expandArrays && obj instanceof Object[]) {
+            Object[] arr = (Object[]) obj;
+            StringBuilder sb = new StringBuilder("M:").append(arr.length).append('|');
+            for (Object o : arr) {
+                String item = serializeScalar(o);
+                // item 形如 "S:xxx"/"I:42"；payload 可能含 ':' 或 '|'，故补长度前缀。
+                // 长度按 UTF-8 字节数计算，与 JNI 传给 Lua 的编码一致。
+                String payload = item.substring(2);
+                sb.append(item.charAt(0)).append(':')
+                  .append(payload.getBytes(StandardCharsets.UTF_8).length).append(':')
+                  .append(payload);
+            }
+            return sb.toString();
+        }
+        return serializeScalar(obj);
+    }
+
+    private static String serializeScalar(Object obj) {
         if (obj == null) return "X:nil";
         if (obj instanceof String) return "S:" + obj;
         if (obj instanceof Integer || obj instanceof Long) return "I:" + obj;

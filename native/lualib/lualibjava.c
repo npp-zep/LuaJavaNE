@@ -2128,6 +2128,7 @@ static int java_promise(lua_State* L) {
     entry->owner = L;
     entry->callbackRef = LUA_NOREF;
     entry->done = 0;
+    entry->expandArrays = lua_toboolean(L, 1);
     entry->result = NULL;
     entry->next = promise_registry;
     promise_registry = entry;

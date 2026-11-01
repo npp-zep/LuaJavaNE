@@ -13,6 +13,7 @@ typedef struct PromiseEntry {
     lua_State* owner;       // 创建/注册回调所属的 Lua 状态
     int callbackRef;        // 回调闭包在 owner 注册表中的引用，LUA_NOREF 表示无
     int done;
+    int expandArrays;       // java.promise(true)：Object[] 结果展开为多值
     char* result;
     struct PromiseEntry* next;
 } PromiseEntry;

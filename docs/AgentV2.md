@@ -35,11 +35,13 @@ Promise 是一个**任务凭证**，由 `java.promise()` 创建，返回一个�
 
 ## Lua API 参考
 
-### `java.promise()`
+### `java.promise([expand_arrays])`
 创建一个新的 Promise，返回一个整数 ID。
 ```lua
-local id = java.promise()   -- 返回整数，如 42
+local id = java.promise()        -- Object[] 结果作为普通对象（O:id）
+local id2 = java.promise(true)   -- Object[] 结果展开为多值
 ```
+`expand_arrays` 为 `true` 时，异步方法返回的 `Object[]` 会被序列化为 `M:` 多值协议，`checkPromise` / `onComplete` 可一次拿到多个值；默认 `false` 保持兼容，数组仍通过 `O:id` + `java.getObject` 取回。
 
 ### `java.runAsync(id, class_name, method_name, ...)`
 提交一个**静态方法**异步任务。
@@ -186,9 +188,21 @@ end
 | 浮点数（如 `3.14`）      | `double` / `Double` / `float` / `Float` |
 | 布尔（`true` / `false`） | `boolean` / `Boolean`            |
 | `O:数字`（如 `"O:123"`） | 任意其他 Java 对象（自动注册到对象池） |
+| `M:数量\|...`            | `Object[]`（仅 `java.promise(true)` 时展开） |
 | `E:错误信息`             | 异常（任务执行失败）             |
 
-**多返回值**：若 Java 方法返回 `Object[]` 或多个值（通过 `callFunctionMultiple` 模拟），则 `checkPromise` 会返回多个值。
+**多返回值**：默认 `Object[]` 仍按 `O:id` 返回，便于继续使用 `Java.Array`。若在创建 Promise 时传入 `true`（`java.promise(true)`），`Object[]` 会被展开为多个 Lua 值：
+
+```lua
+local String = java.import("java.lang.String")
+local str = String:new("a,b,c")
+local id = java.promise(true)
+java.runAsyncObj(id, str, "split", ",")
+repeat local done, a, b, c = java.checkPromise(id) until done
+-- a="a", b="b", c="c"
+```
+
+`M:` 的每个元素都带长度前缀，因此字符串中可以包含 `:` 或 `|`；非基本类型元素仍以 `O:id` 形式返回，可继续用 `java.getObject` 取回。
 
 ---
 

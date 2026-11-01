@@ -155,9 +155,9 @@ public class LuaAgent {
             try {
                 String result;
                 if (task.instance != null) {
-                    result = AsyncRunner.runInstance(task.instance, task.methodName, task.args);
+                    result = AsyncRunner.runInstance(task.instance, task.methodName, task.args, task.expandArrays);
                 } else {
-                    result = AsyncRunner.runStatic(task.className, task.methodName, task.args);
+                    result = AsyncRunner.runStatic(task.className, task.methodName, task.args, task.expandArrays);
                 }
                 
                 totalTasksCompleted.incrementAndGet();
