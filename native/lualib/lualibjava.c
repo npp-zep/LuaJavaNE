@@ -2542,3 +2542,22 @@ jobject java_get_obj(lua_State* L, int idx) {
     JavaUserdata* ud = (JavaUserdata*)luaL_checkudata(L, idx, JAVAOBJECT_META);
     return ud ? ud->obj : NULL;
 }
+
+// 把 Java 相关 userdata 还原为底层对象，返回一个新的局部引用（调用方负责 DeleteLocalRef）。
+// 非 Java userdata（如 clac 数组）返回 NULL。
+jobject java_ud_to_object(lua_State* L, int idx) {
+    JNIEnv* env = getEnv();
+    jobject obj = NULL;
+    JavaUserdata* ud = (JavaUserdata*)luaL_testudata(L, idx, JAVAOBJECT_META);
+    if (ud) obj = ud->obj;
+    else if ((ud = (JavaUserdata*)luaL_testudata(L, idx, JAVACLASS_META))) obj = ud->obj;
+    else {
+        JavaArray* arr = (JavaArray*)luaL_testudata(L, idx, JAVAARRAY_META);
+        if (arr) obj = arr->arrayObj;
+        else {
+            JavaTable* jt = (JavaTable*)luaL_testudata(L, idx, JAVATABLE_META);
+            if (jt) obj = jt->obj;
+        }
+    }
+    return obj ? (*env)->NewLocalRef(env, obj) : NULL;
+}

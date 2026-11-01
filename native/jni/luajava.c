@@ -1,5 +1,6 @@
 // jni/luajava.c
 #include "luajava.h"
+#include "lualibjava_internal.h"
 #include <jni.h>
 #include <lua.h>
 extern int luaopen_java(lua_State* L);
@@ -307,6 +308,9 @@ jobject lua_to_java_object(lua_State* L, JNIEnv* env, int idx) {
             (*env)->DeleteLocalRef(env, cls);
             return obj;
         }
+        case LUA_TUSERDATA:
+            // Java.Object / Java.Class / Java.Array / Java.Table → 底层对象
+            return java_ud_to_object(L, idx);
         default: return NULL;
     }
 }
