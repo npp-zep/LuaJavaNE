@@ -4,6 +4,7 @@ import java.lang.ref.WeakReference;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.List;
@@ -63,6 +64,8 @@ public class LuaAgent {
     // ============ 任务跟踪 ============
     private static final ConcurrentHashMap<Integer, Future<?>> taskFutures = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Integer, Long> taskStartTimes = new ConcurrentHashMap<>();
+    // 单个调度线程负责所有任务超时，避免每个任务创建一个 Thread
+    private static volatile ScheduledThreadPoolExecutor timeoutScheduler;
 
     // ============================================================
     // 初始化
@@ -89,6 +92,7 @@ public class LuaAgent {
                     executor.shutdownNow();
                     executor = null;
                 }
+                shutdownTimeoutScheduler();
                 resetStats();
             }
             
@@ -109,6 +113,9 @@ public class LuaAgent {
                 daemonFactory,
                 new ThreadPoolExecutor.AbortPolicy()
             );
+            timeoutScheduler = new ScheduledThreadPoolExecutor(1, daemonFactory);
+            // 任务完成时取消对应的延迟任务，避免已完成的超时检查堆积到超时时间点
+            timeoutScheduler.setRemoveOnCancelPolicy(true);
             state = State.RUNNING;
         }
     }
@@ -150,6 +157,7 @@ public class LuaAgent {
         totalTasksSubmitted.incrementAndGet();
         final int pid = task.pid;
         taskStartTimes.put(pid, System.currentTimeMillis());
+        final AtomicReference<ScheduledFuture<?>> timeoutTask = new AtomicReference<>();
         
         Callable<String> callable = () -> {
             try {
@@ -175,6 +183,10 @@ public class LuaAgent {
                     // ignore
                 }
                 throw e;
+            } finally {
+                // 任务结束（成功/失败/被超时取消）后取消延迟检查，避免其堆积到超时时间点
+                ScheduledFuture<?> scheduled = timeoutTask.get();
+                if (scheduled != null) scheduled.cancel(false);
             }
         };
         
@@ -194,16 +206,21 @@ public class LuaAgent {
         taskFutures.put(pid, future);
         
         if (timeout > 0 && unit != null) {
-            scheduleTimeoutCheck(pid, future, timeout, unit);
+            ScheduledFuture<?> scheduled = scheduleTimeoutCheck(pid, future, timeout, unit);
+            timeoutTask.set(scheduled);
+            // 任务可能在延迟检查入队前就已结束
+            if (scheduled != null && future.isDone()) scheduled.cancel(false);
         }
         
         return future;
     }
 
-    private static void scheduleTimeoutCheck(int pid, Future<String> future, long timeout, TimeUnit unit) {
-        Thread timeoutThread = new Thread(() -> {
-            try {
-                Thread.sleep(unit.toMillis(timeout));
+    private static ScheduledFuture<?> scheduleTimeoutCheck(int pid, Future<String> future,
+                                                          long timeout, TimeUnit unit) {
+        ScheduledThreadPoolExecutor scheduler = timeoutScheduler;
+        if (scheduler == null || scheduler.isShutdown()) return null;
+        try {
+            return scheduler.schedule(() -> {
                 if (!future.isDone() && !future.isCancelled()) {
                     boolean cancelled = future.cancel(true);
                     if (cancelled) {
@@ -217,12 +234,18 @@ public class LuaAgent {
                         }
                     }
                 }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        });
-        timeoutThread.setDaemon(true);
-        timeoutThread.start();
+            }, timeout, unit);
+        } catch (RejectedExecutionException e) {
+            return null;
+        }
+    }
+
+    private static void shutdownTimeoutScheduler() {
+        ScheduledThreadPoolExecutor scheduler = timeoutScheduler;
+        timeoutScheduler = null;
+        if (scheduler != null) {
+            scheduler.shutdownNow();
+        }
     }
 
     // ============================================================
@@ -421,6 +444,7 @@ public class LuaAgent {
             
             if (executor == null) {
                 state = State.TERMINATED;
+                shutdownTimeoutScheduler();
                 return;
             }
             
@@ -438,6 +462,7 @@ public class LuaAgent {
             } finally {
                 executor = null;
                 state = State.TERMINATED;
+                shutdownTimeoutScheduler();
                 clearRegistry();
                 taskFutures.clear();
                 taskStartTimes.clear();
@@ -460,6 +485,7 @@ public class LuaAgent {
             
             executor = null;
             state = State.TERMINATED;
+            shutdownTimeoutScheduler();
             clearRegistry();
             taskFutures.clear();
             taskStartTimes.clear();
