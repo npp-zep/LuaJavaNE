@@ -209,6 +209,8 @@ doubler.destroy();
 
 当 Lua 函数返回一个 Java 对象时（如通过 Java 方法返回的对象），该对象会被包装为 `userdata`，并在 Java 侧以原类型返回。
 
+> **字符串编码**：Java `String` → Lua 使用标准 UTF-8（emoji 等增补平面字符为 4 字节）；Lua 字符串 → Java 同样按标准 UTF-8 解码。非法 UTF-8 序列或孤立 UTF-16 代理项会替换为 `U+FFFD`。
+
 ---
 
 ## 8. 高级交互：动态代理（Lua 实现 Java 接口）
@@ -263,6 +265,7 @@ java.lang.RuntimeException
 - Java 方法通过注解暴露给 Lua 时，若抛出异常会被捕获并转换为 Lua 错误，然后在 Java 侧重新抛出：
   方法的 `RuntimeException`/`Error` **原样重抛**，其余 checked 异常统一包装为 `JavaInvocationError`（保留原因）。
 - 以上异常均为 `RuntimeException` 的子类，可直接 `catch (RuntimeException)` 统一处理。
+- Lua 调用 Java 方法抛出的异常会先转换为 Lua 错误（信息含 `java.lang.异常类: message`）；若该调用发生在 `doString` / `doFile` / `callFunction` 中，Java 侧会以 `LuaRuntimeError` 呈现并保留该信息。
 
 ---
 

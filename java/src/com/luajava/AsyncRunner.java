@@ -15,30 +15,34 @@ public class AsyncRunner {
     }
 
     public static String invokeInstance(Object obj, String methodName, String[] args, boolean expandArrays) {
-        if (obj == null) return "E:null instance";
-        Class<?> cls = obj.getClass();
-        Method best = null;
-        Object[] bestArgs = null;
-        int bestScore = Integer.MIN_VALUE;
-        for (Method m : cls.getMethods()) {
-            if (!m.getName().equals(methodName)) continue;
-            Object[] converted = matchArgs(m.getParameterTypes(), args);
-            if (converted != null) {
-                int score = scoreMethodMatch(m.getParameterTypes(), converted);
-                if (score > bestScore) {
-                    bestScore = score;
-                    best = m;
-                    bestArgs = converted;
+        try {
+            if (obj == null) return "E:null instance";
+            Class<?> cls = obj.getClass();
+            Method best = null;
+            Object[] bestArgs = null;
+            int bestScore = Integer.MIN_VALUE;
+            for (Method m : cls.getMethods()) {
+                if (!m.getName().equals(methodName)) continue;
+                Object[] converted = matchArgs(m.getParameterTypes(), args);
+                if (converted != null) {
+                    int score = scoreMethodMatch(m.getParameterTypes(), converted);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        best = m;
+                        bestArgs = converted;
+                    }
                 }
             }
-        }
-        if (best == null) return "E:no matching method: " + methodName + detail();
-        try {
-            return serialize(best.invoke(obj, bestArgs), expandArrays);
-        } catch (InvocationTargetException e) {
-            return "E:" + e.getCause();
-        } catch (Throwable e) {
-            return "E:" + methodName + " failed -> " + describeError(e);
+            if (best == null) return "E:no matching method: " + methodName + detail();
+            try {
+                return serialize(best.invoke(obj, bestArgs), expandArrays);
+            } catch (InvocationTargetException e) {
+                return "E:" + e.getCause();
+            } catch (Throwable e) {
+                return "E:" + methodName + " failed -> " + describeError(e);
+            }
+        } finally {
+            releaseObjectArgs(args);
         }
     }
 
@@ -48,11 +52,28 @@ public class AsyncRunner {
 
     public static String runStatic(String className, String methodName, String[] args, boolean expandArrays) {
         try {
-            Class<?> cls = Class.forName(className);
-            if (methodName.equals("new")) return callConstructor(cls, args);
-            return callMethod(cls, null, methodName, args, expandArrays);
-        } catch (Throwable e) {
-            return "E:" + className + "." + methodName + " -> " + describeError(e);
+            try {
+                Class<?> cls = Class.forName(className);
+                if (methodName.equals("new")) return callConstructor(cls, args);
+                return callMethod(cls, null, methodName, args, expandArrays);
+            } catch (Throwable e) {
+                return "E:" + className + "." + methodName + " -> " + describeError(e);
+            }
+        } finally {
+            releaseObjectArgs(args);
+        }
+    }
+
+    // 释放 C 侧为 Java 对象参数登记的池引用（hint='O' 的条目）
+    private static void releaseObjectArgs(String[] pairs) {
+        if (pairs == null) return;
+        for (int i = 1; i < pairs.length; i += 2) {
+            if ("O".equals(pairs[i])) {
+                try {
+                    LuaAgent.releaseArgumentObject(Integer.parseInt(pairs[i - 1]));
+                } catch (NumberFormatException ignored) {
+                }
+            }
         }
     }
 
@@ -150,6 +171,22 @@ public class AsyncRunner {
 
     private static Object convert(String v, String hint, Class<?> t) {
         char h = (hint == null || hint.isEmpty()) ? 'S' : hint.charAt(0);
+        // Java 对象参数：C 侧只传对象池 id，这里非破坏性取回，任务结束后统一释放
+        if (h == 'O') {
+            int id;
+            try {
+                id = Integer.parseInt(v);
+            } catch (NumberFormatException e) {
+                throw new TypeConversionError("invalid object id: " + v, e);
+            }
+            Object o = LuaAgent.peekArgumentObject(id);
+            if (o == null) throw new TypeConversionError("object argument not found: " + id);
+            if (t.isPrimitive()) throw new TypeConversionError("cannot pass object to primitive " + t.getName());
+            if (t != Object.class && !t.isAssignableFrom(o.getClass())) {
+                throw new TypeConversionError("cannot pass " + o.getClass().getName() + " to " + t.getName());
+            }
+            return o;
+        }
         // Object 参数按 Lua 原始类型还原，避免数字/布尔被当作字符串传递
         if (t == Object.class) return hintedValue(v, h);
         if (t == String.class) return v;

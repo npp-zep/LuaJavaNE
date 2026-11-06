@@ -2,6 +2,21 @@
 
 All notable changes to LuaJavaNE will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **`java.cleanup()`**: a Lua-facing entry point for the existing `java_cleanup` implementation, clearing the whole process-global `java.store` table.
+- **Java object arguments in async tasks**: `runAsync` / `runAsyncObj` now accept Java object/array userdata. The C side registers them in a dedicated argument-object pool and passes an `O` hint + id; `AsyncRunner` resolves the id without removing it (overload matching may inspect it multiple times) and releases it in `finally` after the task.
+- **`java.await` now works with `runAsync`**: completion resumes the waiting coroutine on the worker thread under `lua_mutex`, with a liveness check so a closed/removed state is not resumed.
+
+### Changed
+- **Method calls with 7+ arguments use the reflective path**: signature lookup is limited to 6 arguments to avoid exponential combination search; results are unchanged, only the fast path is skipped.
+
+### Fixed
+- **JVM crash for methods with 7+ arguments**: `try_find_method` concatenated up to four candidate signatures per argument into a 128-byte `sig` buffer; seven `int` arguments (and seven `String` arguments) already overflowed the stack (ASan: `stack-buffer-overflow` at `try_method_combinations`). The buffer is now 512 bytes, every append is capacity-checked, and 7+ argument calls fall back to reflection.
+- **Unicode corruption in both directions**: Java `char`/`Character` returns were truncated to one byte, Java `String` returns used JNI modified UTF-8 (emoji became 6-byte CESU-8), and Lua UTF-8 strings passed to Java were decoded as modified UTF-8 (emoji became `ð`). All conversions now go through UTF-16 (`GetStringChars`/`NewString`), preserving 4-byte UTF-8 and embedded NULs; invalid bytes and lone surrogates become `U+FFFD`.
+- **Java exceptions lost their type and message**: synchronous method calls now report `java.lang.异常类: message`; reflective failures return a dedicated `-2` code so the captured throwable is surfaced instead of a bare "method not found".
+
 ## [2.4.0] - 2026-11-06
 ### Added
 - **Python-style multi-line REPL editing**: the JLine REPL now keeps the whole logical block in one editable buffer. Arrow keys move between physical lines first and only switch history at the first/last line (`up-line-or-history`/`down-line-or-history`), a block is submitted by a blank line while a closed single-line statement submits immediately, an unterminated string/bracket keeps the buffer open, multi-line entries stay one history item, and continuation lines use a `>> ` prompt with Lua-keyword auto-indentation (`LuaCompletenessChecker`). Ctrl-C aborts the pending block.

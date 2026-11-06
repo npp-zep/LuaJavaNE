@@ -1,6 +1,7 @@
 // jni/luajava.c
 #include "luajava.h"
 #include "lualibjava_internal.h"
+#include "../lualib/utf8_utils.h"
 #include <jni.h>
 #include <lua.h>
 extern int luaopen_java(lua_State* L);
@@ -180,9 +181,7 @@ void push_java_arg(lua_State* L, JNIEnv* env, jobject arg) {
     jclass cls = (*env)->FindClass(env, "java/lang/String");
     if ((*env)->IsInstanceOf(env, arg, cls)) {
         (*env)->DeleteLocalRef(env, cls);
-        const char* str = (*env)->GetStringUTFChars(env, (jstring)arg, NULL);
-        lua_pushstring(L, str);
-        (*env)->ReleaseStringUTFChars(env, (jstring)arg, str);
+        lua_push_java_string(L, env, (jstring)arg);
         return;
     }
     (*env)->DeleteLocalRef(env, cls);
@@ -206,8 +205,7 @@ void push_java_arg(lua_State* L, JNIEnv* env, jobject arg) {
         cls = (*env)->GetObjectClass(env, arg);
         jmethodID mid = (*env)->GetMethodID(env, cls, "charValue", "()C");
         jchar ch = (*env)->CallCharMethod(env, arg, mid);
-        char buf[1] = { (char)ch };
-        lua_pushlstring(L, buf, 1);
+        lua_push_java_char(L, ch);
         (*env)->DeleteLocalRef(env, cls);
         return;
     }
@@ -287,8 +285,9 @@ jobject lua_to_java_object(lua_State* L, JNIEnv* env, int idx) {
             }
         }
         case LUA_TSTRING: {
-            const char* s = lua_tostring(L, idx);
-            return s ? (*env)->NewStringUTF(env, s) : NULL;
+            size_t len = 0;
+            const char* s = lua_tolstring(L, idx, &len);
+            return s ? utf8_to_jstring(env, s, len) : NULL;
         }
         case LUA_TFUNCTION: {
             lua_pushvalue(L, idx);
@@ -461,9 +460,15 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1doString(JNIEnv* env, jobje
                                                               jlong Lptr, jstring script) {
     LUA_LOCK();
     lua_State* L = (lua_State*)(uintptr_t)Lptr;
-    const char* code = (*env)->GetStringUTFChars(env, script, NULL);
-    int err = luaL_loadstring(L, code);
-    (*env)->ReleaseStringUTFChars(env, script, code);
+    size_t codeLen = 0;
+    char* code = java_string_to_utf8(env, script, &codeLen);
+    if (!code) {
+        LUA_UNLOCK();
+        throwJavaException(env, "java/lang/OutOfMemoryError", "failed to allocate script buffer");
+        return;
+    }
+    int err = luaL_loadbuffer(L, code, codeLen, code);
+    free(code);
     if (err == LUA_OK) err = lua_pcall(L, 0, LUA_MULTRET, 0);
     if (err != LUA_OK) {
         const char* msg = lua_tostring(L, -1);
@@ -525,9 +530,15 @@ JNIEXPORT jint JNICALL Java_com_luajava_LuaRuntime__1compile(JNIEnv* env, jobjec
                                                               jlong Lptr, jstring code) {
     LUA_LOCK();
     lua_State* L = (lua_State*)(uintptr_t)Lptr;
-    const char* ccode = (*env)->GetStringUTFChars(env, code, NULL);
-    int err = luaL_loadstring(L, ccode);
-    (*env)->ReleaseStringUTFChars(env, code, ccode);
+    size_t codeLen = 0;
+    char* ccode = java_string_to_utf8(env, code, &codeLen);
+    if (!ccode) {
+        LUA_UNLOCK();
+        throwJavaException(env, "java/lang/OutOfMemoryError", "failed to allocate script buffer");
+        return -1;
+    }
+    int err = luaL_loadbuffer(L, ccode, codeLen, ccode);
+    free(ccode);
     if (err != LUA_OK) {
         const char* msg = lua_tostring(L, -1);
         lua_pop(L, 1);
@@ -957,9 +968,7 @@ static int lua_java_callback_entry(lua_State* L) {
     }
 
     if ((*env)->IsInstanceOf(env, result, (*env)->FindClass(env, "java/lang/String"))) {
-        const char* s = (*env)->GetStringUTFChars(env, (jstring)result, NULL);
-        lua_pushstring(L, s);
-        (*env)->ReleaseStringUTFChars(env, (jstring)result, s);
+        lua_push_java_string(L, env, (jstring)result);
     } else if ((*env)->IsInstanceOf(env, result, (*env)->FindClass(env, "java/lang/Integer"))) {
         jclass intCls = (*env)->GetObjectClass(env, result);
         lua_pushinteger(L, (*env)->CallIntMethod(env, result,

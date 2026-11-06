@@ -292,6 +292,8 @@ local id = java.promise()
 java.runAsync(id, "java.lang.Integer", "parseInt", "123")
 ```
 
+参数可以是标量，也可以是 Java 对象/数组 userdata：对象会登记到参数对象池并以 id 传递，任务结束后自动释放；`table`/`function` 不支持。
+
 ### 10.3 提交实例方法任务
 
 ```lua
@@ -357,6 +359,13 @@ if err and string.sub(err, 1, 2) == "E:" then
 end
 ```
 
+同步调用（如 `对象:方法()`）抛出 Java 异常时，Lua 侧收到的是包含 `java.lang.异常类: message` 的错误字符串，可用 `pcall` 捕获：
+
+```lua
+local ok, err = pcall(function() return obj:riskyMethod() end)
+-- err 形如: 文件:行号: Java exception in riskyMethod: java.lang.IllegalStateException: detail
+```
+
 ### 10.8 回调消费结果（java.onComplete）
 
 除轮询外，也可注册完成回调，任务完成时由后台线程自动调用，无需轮询：
@@ -379,13 +388,33 @@ end)
 
 ### 10.9 释放锁等待（java.yield）
 
-主线程轮询等待异步结果或代理回调时，`java.yield(ms)` 会短暂释放 Lua 锁（默认 10ms）再重新获取，让后台工作线程有机会执行回调，避免"主线程持锁等待 → 工作线程无法执行 Lua"的死锁（详见第 9 节）。
+主线程轮询等待异步结果或代理回调时，`java.yield(ms)` 会短暂释放 Lua 锁（默认 10ms）再重新获取，让后台工作线程有机会执行回调，避免"主线程持锁等待 → 工作线程无法执行 Lua"的死锁。
 
 ```lua
 while not done do
     java.yield(10)          -- 默认 10ms
 end
 ```
+
+### 10.10 协程等待（java.await）
+
+在协程内挂起等待 Promise 完成，任务完成后由工作线程恢复协程：
+
+```lua
+local co = coroutine.create(function()
+    local id = java.promise()
+    java.runAsync(id, "java.lang.Thread", "sleep", 200)
+    java.await(id)
+    print("done")
+end)
+coroutine.resume(co)
+while coroutine.status(co) ~= "dead" do java.yield(5) end
+```
+
+- 任务已完成：立即返回，结果语义与 `checkPromise` 一致；
+- 任务失败：返回 `E:` 后的错误文本，不抛出异常；
+- 非协程环境等待未完成任务会报 `attempt to yield from outside a coroutine`；
+- 主线程必须用 `java.yield` 让出 Lua 锁，工作线程才能恢复协程。
 
 ---
 
@@ -409,9 +438,12 @@ end
 
 -- 删除
 java.deleteStore("myKey")
+
+-- 清空整个进程级存储
+java.cleanup()
 ```
 
-支持的类型：`nil`, `number`, `string`, `boolean`。存储的值会在进程生命周期内保留（除非显式删除）。
+支持的类型：`nil`, `number`, `string`, `boolean`。存储的值会在进程生命周期内保留（除非显式删除，或调用 `java.cleanup()` 清空整个全局表）。
 `java.listall()` 返回当前进程存储的瞬态快照表，不支持的复杂类型（table/function/userdata 等）存入时会被降级为 `nil` 并在 `listall()` 中跳过。
 
 ---
@@ -425,6 +457,7 @@ java.deleteStore("myKey")
 | `number` (整数) | `int`, `long`（视范围）      | Lua 整数若超出 int 范围则用 long   |
 | `number` (浮点) | `double` / `float`           | 浮点数优先作为 double，可匹配 float |
 | `string`      | `java.lang.String`            | 自动转换                           |
+| `string`（单个码点）或整数 | `char` / `Character` | 超出 BMP 的码点取高代理项；空串为 `\0` |
 | `table` (用作参数) | `com.luajava.LuaTable`（惰性活引用） | 直接传递，Java 以 `LuaTable` 接收，读写实时生效（见第 8 节） |
 | `userdata` (Java 对象) | 对应 Java 对象            | 保持原引用                         |
 | `function`    | 不直接支持，可用代理封装       | 可通过 `java.createProxy` 包装为接口 |
@@ -446,21 +479,29 @@ java.deleteStore("myKey")
 - Java `Map` / `List` / `Collection` → Lua 惰性容器 userdata（见第 8 节）
 - 其他 Java 对象 → Lua Java 对象 userdata（可继续调用其方法）
 
+> **字符串编码**：双向均按标准 UTF-8 转换。emoji 等增补平面字符（4 字节 UTF-8）可正确往返；非法 UTF-8 字节或孤立 UTF-16 代理项会替换为 `U+FFFD`。Java `char` / `Character` 只能表示 BMP 码点。
+
 ---
 
 ## 13. 注意事项
 
-1. **线程安全**：异步任务在独立线程池执行，但 Lua 状态本身不是线程安全的。请勿在多个线程中同时操作同一个 `LuaRuntime` 实例（除非外部加锁）。
+1. **线程安全**：异步任务在独立线程池执行，但 Lua 状态本身不是线程安全的。请勿在多个线程中同时操作同一个 `LuaRuntime` 实例（除非外部加锁）；所有 `LuaRuntime` 共享一把递归 `lua_mutex`，长时间执行 Lua 会阻塞其他状态的调用与回调。
 
-2. **方法重载**：LuaJavaNE 会根据参数类型和数量匹配最合适的重载版本；常规签名查找失败时会自动回退到 Java 反射调用（支持任意返回类型，如 `java.math.BigInteger`/`BigDecimal` 的方法），仍无法匹配才抛出 Lua 错误。
+2. **方法重载**：LuaJavaNE 会根据参数类型和数量匹配最合适的重载版本。6 个参数以内优先走快速签名匹配；7 个及以上自动回退到 Java 反射（结果正确但性能略低）。泛型擦除、可变参数或高度动态的重载仍可能选不到预期版本，失败时报 `no matching method: ... (原因)`。
 
 3. **资源释放**：Java 对象由 JVM GC 管理，但 Lua userdata 会持有 JNI 全局引用，应避免大量临时对象造成内存压力。必要时可显式调用 `java.import("java.lang.System"):gc()` 建议 GC。
 
 4. **数组索引**：Java 数组在 Lua 中索引从 0 开始（与 Java 一致），`#arr` 返回数组长度。
 
-5. **异步超时**：目前没有提供超时机制，可在 Lua 侧用 `utils.timer` 自行实现。
+5. **异步超时**：Lua 侧没有取消/超时 API，底层默认超时 300 秒，可在 Lua 侧用 `utils.timer` 自行实现超时控制。
 
-6. **调试**：可使用 `java.toString(对象)` 获取 Java 对象的字符串表示（等同于 Java 的 `toString()`）。
+6. **异步参数与 await**：Java 对象参数经参数对象池传递并在任务结束后释放；`table`/`function` 不能作为异步参数。`java.await` 必须在协程内等待未完成任务，失败时返回 `E:` 后的错误文本（不抛出）。
+
+7. **Unicode**：字符串按标准 UTF-8 双向转换；非法字节或孤立代理项替换为 `U+FFFD`；Java `char` 只能表示 BMP 字符，无法承载 emoji 等增补平面码点。
+
+8. **全局存储**：`java.store` 是进程级全局表（跨 `LuaRuntime` 共享是设计特性），不会随单个状态关闭而清空；可用 `java.cleanup()` 整体清空。
+
+9. **调试**：可使用 `java.toString(对象)` 获取 Java 对象的字符串表示（等同于 Java 的 `toString()`）。
 
 ---
 

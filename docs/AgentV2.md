@@ -10,6 +10,7 @@ Agent V2 是 LuaJavaNE 提供的**异步任务执行框架**，允许你在 Lua 
 - **错误隔离**：任务中抛出的异常会被捕获并转为错误字符串返回，不会导致整个进程崩溃。
 - **对象池管理**：Java 对象可通过 ID 在任务间传递和复用。
 - **高效轮询**：通过 `checkPromise` 轻量级检查任务完成状态，轮询开销极低。
+- **协程等待**：`java.await` 可在协程内顺序化等待，任务完成由工作线程恢复协程。
 
 ---
 
@@ -22,9 +23,10 @@ Promise 是一个**任务凭证**，由 `java.promise()` 创建，返回一个�
 1. 创建 Promise ID。
 2. 调用 `java.runAsync` 或 `java.runAsyncObj` 提交任务，传入 ID、目标类/对象、方法名和参数。
 3. 任务在线程池中执行，完成后结果存储在 Promise 中。
-4. 消费结果（二选一）：
+4. 消费结果（三选一）：
    - **轮询**：`java.checkPromise(id)`，若完成则获取返回值，并自动清理该 Promise。
    - **回调**：`java.onComplete(id, callback)`，任务完成时后台线程自动调用回调，并自动清理该 Promise。
+   - **协程等待**：`java.await(id)` 在协程内挂起，任务完成后由工作线程恢复协程。
 
 ### 线程池
 - 底层由 `LuaAgent` 管理，基于 `ThreadPoolExecutor`。
@@ -51,7 +53,7 @@ local id2 = java.promise(true)   -- Object[] 结果展开为多值
 - `class_name` (string)：类的全限定名，如 `"java.lang.Integer"`。
 - `method_name` (string)：方法名。特殊方法名 `"new"` 表示调用构造器。
 - `...` (可变参数)：传递给 Java 方法的参数。每个参数在 Lua 中提供**值和类型提示**（自动推断），底层会按顺序匹配。
-  支持 `String`、`boolean`、整数（`int`/`long`/`short`/`byte` 及包装类）、`float`/`double`、`char`/`Character`、`BigInteger`/`BigDecimal`，以及枚举（按常量名，如 `"RED"`）。超出目标类型范围或无法解析时，任务返回 `no matching method: ... (原因)`。
+  支持 `String`、`boolean`、整数（`int`/`long`/`short`/`byte` 及包装类）、`float`/`double`、`char`/`Character`、`BigInteger`/`BigDecimal`，以及枚举（按常量名，如 `"RED"`）。Java 对象/数组（userdata）也可直接传入：底层登记到参数对象池并以 `O` 提示传递，任务结束后自动释放。Lua `table`/`function` 不能作为异步参数。超出目标类型范围或无法解析时，任务返回 `no matching method: ... (原因)`。
 
 **返回值**：无（任务提交后立即返回）。
 
@@ -136,11 +138,34 @@ end)
 |---|---|---|
 | `java.checkPromise(id)` | 轮询 | 主流程 / REPL 循环检查，最直观 |
 | `java.onComplete(id, cb)` | 回调 | 事件驱动、不想占用主线程 |
-| `java.await(id)` | 协程 `lua_yield`/`lua_resume` | 协程内顺序等待（`PromiseTest` 依赖，保留） |
+| `java.await(id)` | 协程 `lua_yield`/`lua_resume` | 协程内顺序等待；Java 任务完成后由工作线程在 `lua_mutex` 内恢复协程 |
 
 - 回调与轮询**结果语义完全一致**（共享同一套结果解析函数），两种方式可放心混用或切换。
 - 同一 id **混用** `onComplete` 与 `checkPromise` 是允许的：两者读到的是同一份结果，但**清理只发生一次**——回调触发后或轮询消费后该 Promise 即从注册表移除，后续访问返回 `false, nil`。建议一个 id 只用一种方式。
 - 回调在后台工作线程上运行，内部经 `lua_mutex`（递归锁）串行访问 Lua 状态；锁序固定为"先释放 `promise_mutex`，再获取 `lua_mutex`"，与主线程路径无反向持锁，不会死锁。回调内再调用 Java（含 `runAsync`）可重入，安全。
+
+### `java.await(id)`
+
+在**协程**中挂起等待 Promise 完成。Java 任务完成后，工作线程在 `lua_mutex` 内解析结果并 `lua_resume` 恢复协程。
+
+**行为**：
+- 任务未完成：当前协程 `yield`；主线程需用 `java.yield(ms)` 释放 Lua 锁，工作线程才能恢复它。
+- 任务已完成：立即返回，不挂起。
+- 返回值与 `checkPromise` 一致（多返回值、`O:id`、`nil`）；失败时返回 `E:` 后的错误文本，**不抛出异常**。
+- 在非协程环境等待未完成任务会报 Lua 错误 `attempt to yield from outside a coroutine`。
+- `await` 不清理 Promise 条目：已完成但未消费时，后续 `checkPromise` 仍能读到同一结果；若条目已被 `checkPromise`/`onComplete` 消费，再调用 `await` 会报 `promise not found: id`。建议一个 id 只用一种消费方式。
+
+**示例**：
+```lua
+local co = coroutine.create(function()
+    local id = java.promise()
+    java.runAsync(id, "java.lang.Thread", "sleep", 200)
+    java.await(id)
+    print("done")
+end)
+coroutine.resume(co)
+while coroutine.status(co) ~= "dead" do java.yield(5) end
+```
 
 ### `java.yield(ms)`
 短暂释放 Lua 互斥锁（`lua_mutex`），等待约 `ms` 毫秒（默认 10）后重新获取。
@@ -191,6 +216,14 @@ end
 | `O:数字`（如 `"O:123"`） | 任意其他 Java 对象（自动注册到对象池） |
 | `M:数量\|...`            | `Object[]`（仅 `java.promise(true)` 时展开） |
 | `E:错误信息`             | 异常（任务执行失败）             |
+
+**入参转换（Lua → Java）**：
+
+| Lua 值 | 传递方式 |
+|---|---|
+| `userdata`（Java 对象/数组） | 登记到参数对象池，以 `O` 提示 + 对象 id 传递；按目标形参类型做 `isAssignableFrom` 检查，任务结束自动释放 |
+| `string` / `number` / `boolean` / `char` | 按类型提示字符串化，再由 Java 侧还原为目标类型 |
+| `table` / `function` | 不支持；被转成空字符串，无法还原 |
 
 **多返回值**：默认 `Object[]` 仍按 `O:id` 返回，便于继续使用 `Java.Array`。若在创建 Promise 时传入 `true`（`java.promise(true)`），`Object[]` 会被展开为多个 Lua 值：
 
@@ -311,17 +344,20 @@ end
 2. **对象生命周期**：通过 `getObject` 获取的对象是 `userdata`，受 Lua GC 管理。若对象被回收，对应的 JVM 全局引用会释放。
 3. **超时处理**：当前 Lua API 未暴露超时参数，但底层默认超时 300 秒。若需自定义，可扩展 `java.runAsync` 增加超时参数。
 4. **性能开销**：每次 `checkPromise` 都会进行互斥锁操作和哈希查找，但开销极小（~微秒级），可高频轮询。
-5. **返回值限制**：当前实现不支持直接返回 `byte[]` 或复杂嵌套对象，如需传递大数据，建议序列化为字符串或使用共享内存。
-6. **协程交互**：Promise 机制与 Lua 协程兼容，你可以在协程中轮询，不会阻塞其他协程。
+5. **返回值限制**：任意非基本类型（包括 `byte[]`）都会注册到对象池并返回 `O:id`，可用 `java.getObject` 取回 userdata；但不会自动深拷贝或展开嵌套结构，大数据建议自行序列化。
+6. **协程交互**：Promise 机制与 Lua 协程兼容：可在协程中轮询，也可用 `java.await` 直接等待（由工作线程恢复协程）。
+7. **对象参数生命周期**：Java 对象参数由参数对象池持有，`AsyncRunner` 在任务结束后释放。若线程池直接拒绝任务（`AbortPolicy`），引用可能残留到进程结束。
+8. **全局锁**：所有 `LuaRuntime` 共享一把递归 `lua_mutex`，一个状态长时间执行 Lua 会阻塞其他状态的异步回调与 `await` 恢复；回调内不要长时间持锁。
 
 ---
 
 ## 内部实现简述
 
 - **Lua 侧**：`java.promise()` 在 C 层创建 `PromiseEntry`，存入全局链表，返回递增 ID。
-- **任务提交**：`java.runAsync` 将参数打包为字符串数组，调用 Java 的 `LuaAgent.submitTask`。
+- **任务提交**：`java.runAsync` 将参数打包为 `[值, 类型提示]` 字符串数组；Java 对象/数组先登记参数对象池，再以对象 id 传递。
 - **Java 执行**：`AsyncRunner` 通过反射匹配方法，将 Lua 参数转换为 Java 类型，执行方法，并将结果序列化为字符串。
 - **结果回调**：`LuaAgent.complete`（JNI 函数）将结果存入 `PromiseEntry`，并置 `done` 标志。
+- **协程恢复**：`java.await` 把当前协程记入 `PromiseEntry`；`LuaAgent.complete` 在 `lua_mutex` 内解析结果并 `lua_resume`。若状态已关闭、条目已被移除，则跳过恢复。
 - **轮询检查**：`java.checkPromise` 遍历链表，若任务完成则解析结果并弹出栈。
 
 ---
@@ -343,10 +379,14 @@ A: 可以，Java 方法若返回 `Object[]`，`checkPromise` 会返回多个值�
 **Q: 如何调试异步任务？**  
 A: 可在任务中打印日志（通过 `System.out.println`），或使用 `java.runAsync` 执行一个简单的测试方法，观察 `checkPromise` 返回的错误信息。
 
+**Q: `java.await` 应该怎么用？**  
+A: 放在 `coroutine` 内，主线程循环调用 `java.yield(ms)` 让出 Lua 锁。任务已完成时立即返回；失败时返回 `E:` 后的错误文本；非协程环境等待未完成任务会报 `attempt to yield from outside a coroutine`。
+
 ---
 
 ## 版本历史
 
+- **当前分支（未发布）**：修复 7 参及以上 Java 方法调用的签名缓冲栈溢出（自动回退反射）；Java/Lua 字符串统一按标准 UTF-8 转换（emoji 可正确往返、`char` 不再截断）；同步调用异常保留 Java 异常类名与消息；异步支持 Java 对象参数，`java.await` 可由任务完成恢复协程；新增 `java.cleanup()` 清空全局存储。
 - **v2.4.0**：`java.promise(true)` 可选把 `Object[]` 结果展开为多值；结果池淘汰不再静默（`java.getObject` 明确报错，`LuaAgent.wasEvicted` / `getRegistryStats` 可查询）；异步参数新增 `short`/`byte`/`char`/`BigInteger`/`BigDecimal`/枚举支持并改进重载匹配；超时检查改用单一调度线程；Promise 生命周期统一由 `Cleaner` 管理。
 - **v2.2.5**：新增回调式消费 API `java.onComplete(id, callback)`，与 `checkPromise` 轮询并存，用户按需二选一；新增 `java.yield(ms)` 等待原语（释放 Lua 锁）；统一 PromiseEntry 生命周期清理。
 - **v2.0**：初始版本，支持静态/实例异步调用、对象池、多返回值。

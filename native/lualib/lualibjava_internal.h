@@ -34,6 +34,7 @@ extern int java_checkPromise(lua_State* L);
 extern int java_getObject(lua_State* L);
 extern void java_promise_cleanup_state(lua_State* L);   // 状态关闭时清理其回调引用
 extern void dispatch_callback(lua_State* owner, int cbRef, const char* result); // 派发回调闭包
+extern int java_push_parsed_result(lua_State* L, const char* r); // 解析结果串并按需压栈
 
 // ========== lualibjava.c 导出的函数 ==========
 extern int luaopen_java(lua_State* L);

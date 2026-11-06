@@ -376,6 +376,25 @@ public class LuaAgent {
         return id;
     }
 
+    // 异步调用参数中的 Java 对象：单独一张表，非破坏性读取（重载匹配可能多次访问），
+    // AsyncRunner 在一次任务结束后统一释放。
+    private static final Map<Integer, Object> argumentObjects = new ConcurrentHashMap<>();
+    private static final AtomicInteger argumentIdCounter = new AtomicInteger(1);
+
+    public static int registerArgumentObject(Object obj) {
+        int id = argumentIdCounter.getAndIncrement();
+        argumentObjects.put(id, obj);
+        return id;
+    }
+
+    public static Object peekArgumentObject(int id) {
+        return argumentObjects.get(id);
+    }
+
+    public static void releaseArgumentObject(int id) {
+        argumentObjects.remove(id);
+    }
+
     public static Object getObject(int id) {
         // 强引用(异步)对象：取走即释放，返回的 userdata 自行持有全局引用保证存活
         Object pinned = pinnedObjects.remove(id);

@@ -2,6 +2,7 @@
 #include "lauxlib.h"
 #include "lualib.h"
 #include "lualibjava_internal.h"
+#include "utf8_utils.h"
 #include <jni.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -17,7 +18,7 @@ pthread_mutex_t promise_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // ========== 共享解析器：把序列化结果串按前缀压入栈 ==========
 // 返回压入栈的值的个数；供 checkPromise 与回调派发共用，保证结果语义一致
-static int push_parsed_result(lua_State* L, const char* r) {
+int java_push_parsed_result(lua_State* L, const char* r) {
     int pushed = 0;
     if (!r || !r[0]) return pushed;
     switch (r[0]) {
@@ -73,7 +74,7 @@ void dispatch_callback(lua_State* owner, int cbRef, const char* result) {
             lua_pushstring(owner, result + 2);
         } else {
             lua_pushnil(owner);
-            if (result && result[0]) push_parsed_result(owner, result);
+            if (result && result[0]) java_push_parsed_result(owner, result);
             else lua_pushnil(owner);
         }
         int nargs = lua_gettop(owner) - (base + 1);   // 函数之上的参数个数
@@ -91,9 +92,11 @@ void dispatch_callback(lua_State* owner, int cbRef, const char* result) {
 
 JNIEXPORT void JNICALL Java_com_luajava_LuaAgent_complete
   (JNIEnv* env, jclass cls, jint pid, jstring result) {
-    const char* s = (*env)->GetStringUTFChars(env, result, NULL);
+    char* s = java_string_to_utf8(env, result, NULL);
+    if (!s) return;
 
     lua_State* owner = NULL;
+    lua_State* co = NULL;
     int cbRef = LUA_NOREF;
     char* copy = NULL;
 
@@ -103,22 +106,42 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaAgent_complete
         if (e->result) free(e->result);
         e->result = strdup(s);
         e->done = 1;
+        co = e->co;                 // 等待中的协程，完成后由本线程恢复
+        e->co = NULL;
         if (e->callbackRef != LUA_NOREF) {
             owner = e->owner;
             cbRef = e->callbackRef;
             copy = strdup(s);
             e->callbackRef = LUA_NOREF;
-            promise_remove(e);
+            if (!co) promise_remove(e);
         }
     }
     pthread_mutex_unlock(&promise_mutex);
 
     // 先释放 promise_mutex 再进 Lua，锁序：promise_mutex → 释放 → lua_mutex
+    if (co) {
+        pthread_mutex_lock(&lua_mutex);
+        // 若状态已被 close/cleanup 移除，则协程指针可能已失效，放弃恢复
+        pthread_mutex_lock(&promise_mutex);
+        int alive = (promise_find(pid) != NULL);
+        pthread_mutex_unlock(&promise_mutex);
+        if (alive) {
+            int n = java_push_parsed_result(co, s);
+            int nres = 0;
+            int rc = lua_resume(co, owner, n, &nres);
+            if (rc != LUA_OK && rc != LUA_YIELD) {
+                const char* msg = lua_tostring(co, -1);
+                fprintf(stderr, "java.await resume error: %s\n", msg ? msg : "unknown");
+                lua_pop(co, 1);
+            }
+        }
+        pthread_mutex_unlock(&lua_mutex);
+    }
     if (copy) {
         dispatch_callback(owner, cbRef, copy);
         free(copy);
     }
-    (*env)->ReleaseStringUTFChars(env, result, s);
+    free(s);
 }
 
 // 状态关闭时清理该状态注册的回调引用，避免悬空
@@ -174,6 +197,44 @@ static const char* arg_to_string(lua_State* L, int idx, char* buf, size_t bufsz)
     return buf;
 }
 
+// 构造 AgentTask 的 [value,hint] 参数对：Java 对象经对象池传 id（hint='O'），
+// 避免把 userdata 字符串化成空串。返回值类型由 AsyncRunner 从池中取回。
+static void fill_task_args(lua_State* L, JNIEnv* env, int firstIdx, int argCount,
+                           jobjectArray jargs) {
+    jclass agentCls = (*env)->FindClass(env, "com/luajava/LuaAgent");
+    jmethodID regMid = (*env)->GetStaticMethodID(env, agentCls, "registerArgumentObject", "(Ljava/lang/Object;)I");
+    for (int i = 0; i < argCount; i++) {
+        int idx = firstIdx + i;
+        char buf[64];
+        const char* val;
+        char hint;
+        jobject obj = (lua_type(L, idx) == LUA_TUSERDATA) ? java_ud_to_object(L, idx) : NULL;
+        if (obj && regMid) {
+            jint oid = (*env)->CallStaticIntMethod(env, agentCls, regMid, obj);
+            if ((*env)->ExceptionCheck(env)) {
+                (*env)->ExceptionClear(env);
+                val = arg_to_string(L, idx, buf, sizeof(buf));
+                hint = get_type_hint(L, idx);
+            } else {
+                snprintf(buf, sizeof(buf), "%d", (int)oid);
+                val = buf;
+                hint = 'O';
+            }
+        } else {
+            val = arg_to_string(L, idx, buf, sizeof(buf));
+            hint = get_type_hint(L, idx);
+        }
+        char hbuf[2] = { hint, '\0' };
+        jstring jval = utf8_to_jstring(env, val, strlen(val));
+        jstring jhint = (*env)->NewStringUTF(env, hbuf);
+        (*env)->SetObjectArrayElement(env, jargs, i * 2, jval);
+        (*env)->SetObjectArrayElement(env, jargs, i * 2 + 1, jhint);
+        (*env)->DeleteLocalRef(env, jval);
+        (*env)->DeleteLocalRef(env, jhint);
+    }
+    (*env)->DeleteLocalRef(env, agentCls);
+}
+
 int java_runAsync(lua_State* L) {
     int pid = (int)luaL_checkinteger(L, 1);
     const char* cls = luaL_checkstring(L, 2);
@@ -199,17 +260,7 @@ int java_runAsync(lua_State* L) {
 
     jclass strCls = (*env)->FindClass(env, "java/lang/String");
     jobjectArray jargs = (*env)->NewObjectArray(env, pairCount > 0 ? pairCount : 0, strCls, NULL);
-    for (int i = 0; i < argCount; i++) {
-        char buf[64];
-        const char* val = arg_to_string(L, 4 + i, buf, sizeof(buf));
-        char hint[2] = { get_type_hint(L, 4 + i), '\0' };
-        jstring jval = (*env)->NewStringUTF(env, val);
-        jstring jhint = (*env)->NewStringUTF(env, hint);
-        (*env)->SetObjectArrayElement(env, jargs, i * 2, jval);
-        (*env)->SetObjectArrayElement(env, jargs, i * 2 + 1, jhint);
-        (*env)->DeleteLocalRef(env, jval);
-        (*env)->DeleteLocalRef(env, jhint);
-    }
+    fill_task_args(L, env, 4, argCount, jargs);
 
     jobject task = (*env)->NewObject(env, taskCls, ctor, (jint)pid, jcls, jmtd, jargs, (jboolean)expand);
     (*env)->DeleteLocalRef(env, jcls);
@@ -251,17 +302,7 @@ int java_runAsyncObj(lua_State* L) {
 
     jclass strCls = (*env)->FindClass(env, "java/lang/String");
     jobjectArray jargs = (*env)->NewObjectArray(env, pairCount > 0 ? pairCount : 0, strCls, NULL);
-    for (int i = 0; i < argCount; i++) {
-        char buf[64];
-        const char* val = arg_to_string(L, 4 + i, buf, sizeof(buf));
-        char hint[2] = { get_type_hint(L, 4 + i), '\0' };
-        jstring jval = (*env)->NewStringUTF(env, val);
-        jstring jhint = (*env)->NewStringUTF(env, hint);
-        (*env)->SetObjectArrayElement(env, jargs, i * 2, jval);
-        (*env)->SetObjectArrayElement(env, jargs, i * 2 + 1, jhint);
-        (*env)->DeleteLocalRef(env, jval);
-        (*env)->DeleteLocalRef(env, jhint);
-    }
+    fill_task_args(L, env, 4, argCount, jargs);
 
     jobject jobj = java_get_obj(L, 2);
     jobject task = (*env)->NewObject(env, taskCls, ctor, (jint)pid, jobj, jmtd, jargs, (jboolean)expand);
@@ -290,7 +331,7 @@ int java_checkPromise(lua_State* L) {
     lua_pushboolean(L, e->done);
     int n = 1;
     if (e->done && e->result) {
-        int pushed = push_parsed_result(L, e->result);
+        int pushed = java_push_parsed_result(L, e->result);
         n += pushed;
         // 已消费 + 无回调 → 清理条目（修复泄漏）
         if (e->callbackRef == LUA_NOREF) {
