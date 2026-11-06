@@ -41,11 +41,11 @@ JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaTable_keysNative
 
 /*
  * Class:     com_luajava_LuaTable
- * Method:    destroyNative
- * Signature: ()V
+ * Method:    releaseNative
+ * Signature: (JI)V
  */
-JNIEXPORT void JNICALL Java_com_luajava_LuaTable_destroyNative
-  (JNIEnv *, jobject);
+JNIEXPORT void JNICALL Java_com_luajava_LuaTable_releaseNative
+  (JNIEnv *, jclass, jlong, jint);
 
 #ifdef __cplusplus
 }

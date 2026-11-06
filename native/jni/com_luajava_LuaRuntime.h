@@ -37,7 +37,7 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1doString
  * Signature: (J)V
  */
 JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1close
-  (JNIEnv *, jobject, jlong);
+  (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_luajava_LuaRuntime

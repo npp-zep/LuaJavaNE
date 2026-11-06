@@ -1,7 +1,6 @@
 package com.luajava;
 
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import java.lang.ref.Cleaner;
 
 /**
  * 代表一个 Lua table 的惰性"活引用"。不复制数据：{@link #get}/{@link #put}
@@ -12,16 +11,21 @@ import java.util.logging.Logger;
  * 形参类型直接接收 Lua table。使用后应调用 {@link #destroy()} 释放本机引用。
  */
 public class LuaTable {
-    private static final Logger LOGGER = Logger.getLogger(LuaTable.class.getName());
+    private static final Cleaner CLEANER = Cleaner.create();
 
     private long statePtr; // 指向 lua_State* 的指针
     private int ref;       // 注册表中的引用，-1 表示已释放
     private volatile boolean destroyed;
+    private final Cleaner.Cleanable cleanable;
 
     public LuaTable(long statePtr, int ref) {
         this.statePtr = statePtr;
         this.ref = ref;
         this.destroyed = false;
+        long createdState = statePtr;
+        int createdRef = ref;
+        // Cleaner 只捕获状态指针与注册表引用，不引用本对象
+        this.cleanable = CLEANER.register(this, () -> releaseNative(createdState, createdRef));
     }
 
     /**
@@ -78,30 +82,10 @@ public class LuaTable {
             if (destroyed) {
                 return;
             }
-            if (statePtr != 0 && ref >= 0) {
-                destroyNative();
-                ref = -1;
-            }
             destroyed = true;
-            statePtr = 0;
-        }
-    }
-
-    @Override
-    protected void finalize() throws Throwable {
-        try {
-            if (!destroyed && statePtr != 0 && ref >= 0) {
-                try {
-                    destroyNative();
-                } catch (Throwable t) {
-                    LOGGER.log(Level.WARNING, "Failed to release Lua table in finalize", t);
-                }
-            }
-            destroyed = true;
+            cleanable.clean(); // 显式 destroy 与 GC 清理最多执行一次
             ref = -1;
             statePtr = 0;
-        } finally {
-            super.finalize();
         }
     }
 
@@ -110,5 +94,5 @@ public class LuaTable {
     private native void putNative(Object key, Object value);
     private native int sizeNative();
     private native Object[] keysNative();
-    private native void destroyNative();
+    private static native void releaseNative(long statePtr, int ref);
 }

@@ -422,20 +422,14 @@ JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaTable_keysNative
     return arr;
 }
 
-// ========== LuaTable.destroyNative ==========
-JNIEXPORT void JNICALL Java_com_luajava_LuaTable_destroyNative
-  (JNIEnv* env, jobject obj) {
+// ========== LuaTable.releaseNative（显式 destroy 与 Cleaner 共用） ==========
+JNIEXPORT void JNICALL Java_com_luajava_LuaTable_releaseNative
+  (JNIEnv* env, jclass cls, jlong Lptr, jint ref) {
+    (void)env; (void)cls;
     LUA_LOCK();
-    jclass cls = (*env)->GetObjectClass(env, obj);
-    jfieldID sf = (*env)->GetFieldID(env, cls, "statePtr", "J");
-    jfieldID rf = (*env)->GetFieldID(env, cls, "ref", "I");
-    jlong Lptr = (*env)->GetLongField(env, obj, sf);
-    jint ref = (*env)->GetIntField(env, obj, rf);
-    (*env)->DeleteLocalRef(env, cls);
     if (Lptr != 0 && ref >= 0) {
         lua_State* L = (lua_State*)(uintptr_t)Lptr;
         luaL_unref(L, LUA_REGISTRYINDEX, ref);
-        (*env)->SetIntField(env, obj, rf, -1);
         if (lua_state_release_ref(L)) {
             java_promise_cleanup_state(L);
             lua_close(L);
@@ -485,7 +479,8 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1doString(JNIEnv* env, jobje
 }
 
 // ========== LuaRuntime._close ==========
-JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1close(JNIEnv* env, jobject obj, jlong Lptr) {
+JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1close(JNIEnv* env, jclass cls, jlong Lptr) {
+    (void)env; (void)cls;
     LUA_LOCK();
     lua_State* L = (lua_State*)(uintptr_t)Lptr;
     // 释放 LuaRuntime 持有的引用；若仍有 LuaFunctionObj/LuaInvocationHandler 引用，
@@ -678,19 +673,14 @@ JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaFunctionObj_callMultipleNativ
     return results;
 }
 
-// ========== LuaFunction.destroy ==========
-JNIEXPORT void JNICALL Java_com_luajava_LuaFunctionObj_destroyNative(JNIEnv* env, jobject obj) {
+// ========== LuaFunctionObj.releaseNative（显式 destroy 与 Cleaner 共用） ==========
+JNIEXPORT void JNICALL Java_com_luajava_LuaFunctionObj_releaseNative(JNIEnv* env, jclass cls,
+                                                                     jlong Lptr, jint ref) {
+    (void)env; (void)cls;
     LUA_LOCK();
-    jclass cls = (*env)->GetObjectClass(env, obj);
-    jfieldID sf = (*env)->GetFieldID(env, cls, "statePtr", "J");
-    jfieldID rf = (*env)->GetFieldID(env, cls, "ref", "I");
-    jlong Lptr = (*env)->GetLongField(env, obj, sf);
-    jint ref = (*env)->GetIntField(env, obj, rf);
-    (*env)->DeleteLocalRef(env, cls);
     if (Lptr != 0 && ref >= 0) {
         lua_State* L = (lua_State*)(uintptr_t)Lptr;
         luaL_unref(L, LUA_REGISTRYINDEX, ref);
-        (*env)->SetIntField(env, obj, rf, -1);
         // 释放该 LuaFunctionObj 对状态持有的引用；若为最后一个，则真正关闭状态
         if (lua_state_release_ref(L)) {
             java_promise_cleanup_state(L);
