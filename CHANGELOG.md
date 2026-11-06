@@ -1,4 +1,4 @@
-## [Unreleased]
+## [2.4.0] - 2026-11-06
 ### Added
 - **Python-style multi-line REPL editing**: the JLine REPL now keeps the whole logical block in one editable buffer. Arrow keys move between physical lines first and only switch history at the first/last line (`up-line-or-history`/`down-line-or-history`), a block is submitted by a blank line while a closed single-line statement submits immediately, an unterminated string/bracket keeps the buffer open, multi-line entries stay one history item, and continuation lines use a `>> ` prompt with Lua-keyword auto-indentation (`LuaCompletenessChecker`). Ctrl-C aborts the pending block.
 - **`InputCompletenessChecker` SPI**: pluggable `check(buffer)` / `indentationFor(buffer)` used by `LineEditor` to decide continuation vs submission; the Lua implementation lexes short/long strings, long brackets, comments, bracket nesting and block keywords (`if`/`for`/`while`/`do`/`function`/`repeat` → `end`/`until`).
