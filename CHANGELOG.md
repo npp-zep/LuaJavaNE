@@ -1,3 +1,7 @@
+# Changelog
+
+All notable changes to LuaJavaNE will be documented in this file.
+
 ## [2.4.0] - 2026-11-06
 ### Added
 - **Python-style multi-line REPL editing**: the JLine REPL now keeps the whole logical block in one editable buffer. Arrow keys move between physical lines first and only switch history at the first/last line (`up-line-or-history`/`down-line-or-history`), a block is submitted by a blank line while a closed single-line statement submits immediately, an unterminated string/bracket keeps the buffer open, multi-line entries stay one history item, and continuation lines use a `>> ` prompt with Lua-keyword auto-indentation (`LuaCompletenessChecker`). Ctrl-C aborts the pending block.
@@ -103,7 +107,6 @@
 - Method-not-found for methods returning concrete object types (e.g. `java.math` core methods)
 - Deadlock-prone `Thread.join()` pattern documented in the proxy example (replaced with `java.yield` wait loop)
 
-
 ## [2.2.4] - 2026-07-17
 ### Added
 - **Java arrays as Lua userdata**: automatic array detection and metadata caching when creating Java object wrappers
@@ -126,7 +129,6 @@
   - Fixed JNI `AttachCurrentThread` type warning
   - Updated workflow for multi-platform release artifacts
 
-
 ## [2.2.3] - 2026-07-09
 ### Added
 - **Multi-platform Release**: Linux x86_64, Linux ARM64, macOS ARM64 pre-built packages
@@ -146,30 +148,6 @@
 - External Lua C extensions (e.g. `lfs.so`) now load correctly via `LD_PRELOAD`
 - Release package now includes `lib/jline.jar`
 - `copyright`/`credits`/`license` no longer show duplicate help text
-- Compilation warning in `lualibjava.c` (array index out of bounds)
-
-
-
-## [2.2.1] - 2026-06-19
-### Added
-- **Multi-platform Release**: Linux x86_64, Linux ARM64, macOS ARM64 pre-built packages
-- **version.properties**: single source of truth for project version/metadata
-- **Examples**: `examples/hello.lua`, `examples/async.lua`, `examples/clac.lua`
-- **make release**: one-step packaging into `release/` directory
-- **helpRepl()**: separate REPL-specific help message
-- Cross-platform LuaRocks support via `LD_PRELOAD` + `LUA_PATH`/`LUA_CPATH` detection
-
-### Changed
-- `LuaJMain.java` reads version/copyright/license from system properties
-- `luaj.sh` auto-detects Lua module paths on Linux/macOS/Termux
-- CI/CD: matrix build for multi-platform releases, fixed test workflow
-- `_VERSION` now shows `LuaJavaNE 2.2.1 (Lua x.x.x, PUC-Rio)`
-
-### Fixed
-- External Lua C extensions (e.g. `lfs.so`) now load correctly via `LD_PRELOAD`
-- Release package now includes `lib/jline.jar`
-- `copyright`/`credits`/`license` no longer show duplicate help text
-
 
 ## [2.2.1] - 2026-06-18
 🎉 This is the 100th commit of the LuaJavaNE project.
@@ -183,11 +161,6 @@
 ### Fixed
 - Compilation warning in `lualibjava.c` (array index out of bounds)
 - `LD_PRELOAD` pollution in user environment (no longer set by project)
-
-
-# Changelog
-
-All notable changes to LuaJavaNE will be documented in this file.
 
 ## [2.2.0] - 2026-06-17
 ### Added
