@@ -81,7 +81,8 @@ test: all
 	     --select-class=com.luajava.AsyncTest \
 	     --select-class=com.luajava.AgentTest \
 	     --select-class=com.luajava.CallbackTest \
-	     --select-class=com.luajava.TableBridgeTest
+	     --select-class=com.luajava.TableBridgeTest \
+	     --select-class=com.luajava.ReplInputTest
 	@echo ""
 	@echo "All JUnit tests passed."
 
