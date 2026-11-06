@@ -790,16 +790,20 @@ JNIEXPORT jobject JNICALL Java_com_luajava_LuaInvocationHandler_invokeNative
 
     jstring jname = (jstring)(*env)->CallObjectMethod(env, method, getNameMid);
     const char* name = jname ? (*env)->GetStringUTFChars(env, jname, NULL) : "unknown";
+    // 提前复制方法名：JNI 字符串必须在释放后立即停止使用，后续 lua_getfield 和
+    // 错误消息都依赖这份副本，否则会读到已释放内存（表现为乱码方法名）。
+    char namebuf[256];
+    snprintf(namebuf, sizeof(namebuf), "%s", name ? name : "unknown");
+    if (jname) {
+        (*env)->ReleaseStringUTFChars(env, jname, name);
+        (*env)->DeleteLocalRef(env, jname);
+    }
     (*env)->DeleteLocalRef(env, methodCls);
 
     // 从注册表获取 Lua 表
     lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
-        if (jname) {
-            (*env)->ReleaseStringUTFChars(env, jname, name);
-            (*env)->DeleteLocalRef(env, jname);
-        }
         LUA_UNLOCK();
         throwJavaException(env, "com/luajava/exception/LuaRuntimeError",
                            "Lua table reference is invalid");
@@ -807,17 +811,13 @@ JNIEXPORT jobject JNICALL Java_com_luajava_LuaInvocationHandler_invokeNative
     }
 
     // 获取 Lua 函数
-    lua_getfield(L, -1, name);
-    if (jname) {
-        (*env)->ReleaseStringUTFChars(env, jname, name);
-        (*env)->DeleteLocalRef(env, jname);
-    }
+    lua_getfield(L, -1, namebuf);
 
     if (!lua_isfunction(L, -1)) {
         lua_pop(L, 2);
         LUA_UNLOCK();
         char buf[512];
-        snprintf(buf, sizeof(buf), "Method '%s' not implemented in Lua table", name);
+        snprintf(buf, sizeof(buf), "Method '%s' not implemented in Lua table", namebuf);
         (*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/NoSuchMethodError"), buf);
         return NULL;
     }

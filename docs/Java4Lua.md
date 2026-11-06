@@ -235,6 +235,8 @@ print(proxy(3))      -- 等价 proxy:call(3)
 
 使用 `java.createProxy({接口名列表}, handler表)` 创建 Java 代理对象，其中 `handler` 表需包含对应接口方法的 Lua 函数。接口方法被调用时派发到 handler 表中**同名（区分大小写）**的 Lua 函数，第一个参数 `self` 为 handler 表。
 
+handler 表未定义某个方法时：接口的 `default` 方法执行 Java 默认实现；`toString`/`hashCode`/`equals` 按代理对象自身语义处理（`LuaProxy@<hash>`、identity hash、引用相等）。若 handler 表定义了同名函数，则仍优先派发到 Lua。
+
 **错误处理**：`接口名列表` 必须是**非空**的字符串数组——列表为空（含误把 `handler` 表当第一个参数传入，即 `java.createProxy(handler, {接口...})`）时返回 `nil` 与 `invalid interface list ...` 错误信息；接口名不是字符串时返回 `interface name at index N is not a string`；接口类不存在时返回 `interface not found: 类名`。以上错误均以 `nil + 错误信息` 的形式返回，不会导致进程崩溃。
 
 ```lua
