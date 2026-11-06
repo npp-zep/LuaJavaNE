@@ -163,7 +163,7 @@ end
 
 **参数**：`id` (integer) – 对象在池中的注册 ID（从 `checkPromise` 返回的 `"O:数字"` 格式中解析）。
 
-**返回值**：Java 对象的 Lua userdata，可像普通 Java 对象一样调用其方法。
+**返回值**：Java 对象的 Lua userdata，可像普通 Java 对象一样调用其方法。若 id 不存在或已被取走，返回 `nil`；若该对象**因结果池超出上限被淘汰**（超过 10000 个未被取走的结果），则抛出 Lua 错误 `async result N was discarded: ...`，不再静默返回 `nil`。
 
 **示例**：
 ```lua

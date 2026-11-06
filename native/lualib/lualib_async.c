@@ -315,8 +315,27 @@ int java_getObject(lua_State* L) {
     if (!getObjMid) { (*env)->ExceptionClear(env); lua_pushnil(L); (*env)->DeleteLocalRef(env, agentCls); return 1; }
 
     jobject obj = (*env)->CallStaticObjectMethod(env, agentCls, getObjMid, (jint)id);
+    if (!obj) {
+        // 区分“不存在/已被取走”与“对象池溢出被淘汰”：后者是数据丢失，明确报错而不是静默 nil
+        jmethodID evictedMid = (*env)->GetStaticMethodID(env, agentCls, "wasEvicted", "(I)Z");
+        jboolean evicted = JNI_FALSE;
+        if (evictedMid) {
+            evicted = (*env)->CallStaticBooleanMethod(env, agentCls, evictedMid, (jint)id);
+            if ((*env)->ExceptionCheck(env)) {
+                (*env)->ExceptionClear(env);
+                evicted = JNI_FALSE;
+            }
+        } else {
+            (*env)->ExceptionClear(env);
+        }
+        (*env)->DeleteLocalRef(env, agentCls);
+        if (evicted) {
+            return luaL_error(L, "async result %d was discarded: async result pool exceeded its capacity (too many unconsumed results)", id);
+        }
+        lua_pushnil(L);
+        return 1;
+    }
     (*env)->DeleteLocalRef(env, agentCls);
-    if (!obj) { lua_pushnil(L); return 1; }
 
     new_java_object_ud(L, obj);  // 使用 lualibjava.c 中的函数包装
     (*env)->DeleteLocalRef(env, obj);

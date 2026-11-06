@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.List;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.logging.Logger;
 
 public class LuaAgent {
     // ============ 状态管理 ============
@@ -38,10 +39,27 @@ public class LuaAgent {
 
             @Override
             protected boolean removeEldestEntry(Map.Entry<Integer, Object> eldest) {
-                return size() > MAX_PINNED_OBJECTS;
+                if (size() <= MAX_PINNED_OBJECTS) return false;
+                recordEviction(eldest.getKey());
+                return true;
             }
         });
     private static final AtomicInteger objectIdCounter = new AtomicInteger(1);
+
+    // 因超出上限被淘汰的异步结果 id（仅保留最近一批），用于区分
+    // “id 不存在/已被取走”与“因对象池溢出被丢弃”，避免 getObject 静默返回 null。
+    private static final int MAX_EVICTED_TRACKED = 2048;
+    private static final Map<Integer, Boolean> evictedIds =
+        Collections.synchronizedMap(new LinkedHashMap<Integer, Boolean>(16, 0.75f, false) {
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<Integer, Boolean> eldest) {
+                return size() > MAX_EVICTED_TRACKED;
+            }
+        });
+    private static final AtomicLong totalEvictedObjects = new AtomicLong(0);
+    private static final Logger LOGGER = Logger.getLogger(LuaAgent.class.getName());
     
     // ============ 同步锁 ============
     private static final Object initLock = new Object();
@@ -324,6 +342,8 @@ public class LuaAgent {
         totalTasksFailed.set(0);
         totalTasksTimeout.set(0);
         totalTasksCancelled.set(0);
+        totalEvictedObjects.set(0);
+        evictedIds.clear();
         taskFutures.clear();
         taskStartTimes.clear();
     }
@@ -374,6 +394,26 @@ public class LuaAgent {
         return obj;
     }
 
+    // 该 id 是否因异步结果池溢出而被淘汰（区别于“不存在/已被取走”）
+    public static boolean wasEvicted(int id) {
+        return evictedIds.containsKey(id);
+    }
+
+    // 淘汰时记录 id 并告警（首次与每 1000 次打印一条，避免刷屏）
+    private static void recordEviction(int id) {
+        evictedIds.put(id, Boolean.TRUE);
+        long total = totalEvictedObjects.incrementAndGet();
+        if (total == 1 || total % 1000 == 0) {
+            LOGGER.warning("Async result pool exceeded " + MAX_PINNED_OBJECTS
+                    + " entries; discarded result id " + id
+                    + " (total evicted: " + total + ")");
+        }
+    }
+
+    public static long getEvictedObjectCount() {
+        return totalEvictedObjects.get();
+    }
+
     // 释放一个尚未被 getObject 取走的异步对象强引用（防泄漏）
     public static boolean unregisterStrongObject(int id) {
         return pinnedObjects.remove(id) != null;
@@ -405,6 +445,7 @@ public class LuaAgent {
     public static void clearRegistry() {
         objectRegistry.clear();
         pinnedObjects.clear();
+        evictedIds.clear();
     }
 
     public static String getRegistryStats() {
@@ -421,8 +462,9 @@ public class LuaAgent {
         }
         
         return String.format(
-            "Registry stats - Total: %d, Alive: %d, Stale: %d, Max: %d",
-            total, alive, stale, MAX_REGISTERED_OBJECTS
+            "Registry stats - Total: %d, Alive: %d, Stale: %d, Max: %d, Pinned: %d, Evicted: %d",
+            total, alive, stale, MAX_REGISTERED_OBJECTS, pinnedObjects.size(),
+            totalEvictedObjects.get()
         );
     }
 
