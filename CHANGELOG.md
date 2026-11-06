@@ -2,7 +2,7 @@
 
 All notable changes to LuaJavaNE will be documented in this file.
 
-## [Unreleased]
+## [2.4.1] - 2026-11-07
 
 ### Added
 - **`java.cleanup()`**: a Lua-facing entry point for the existing `java_cleanup` implementation, clearing the whole process-global `java.store` table.

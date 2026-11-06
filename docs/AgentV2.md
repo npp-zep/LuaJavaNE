@@ -386,7 +386,7 @@ A: 放在 `coroutine` 内，主线程循环调用 `java.yield(ms)` 让出 Lua �
 
 ## 版本历史
 
-- **当前分支（未发布）**：修复 7 参及以上 Java 方法调用的签名缓冲栈溢出（自动回退反射）；Java/Lua 字符串统一按标准 UTF-8 转换（emoji 可正确往返、`char` 不再截断）；同步调用异常保留 Java 异常类名与消息；异步支持 Java 对象参数，`java.await` 可由任务完成恢复协程；新增 `java.cleanup()` 清空全局存储。
+- **v2.4.1**：修复 7 参及以上 Java 方法调用的签名缓冲栈溢出（自动回退反射）；Java/Lua 字符串统一按标准 UTF-8 转换（emoji 可正确往返、`char` 不再截断）；同步调用异常保留 Java 异常类名与消息；异步支持 Java 对象参数，`java.await` 可由任务完成恢复协程；新增 `java.cleanup()` 清空全局存储。
 - **v2.4.0**：`java.promise(true)` 可选把 `Object[]` 结果展开为多值；结果池淘汰不再静默（`java.getObject` 明确报错，`LuaAgent.wasEvicted` / `getRegistryStats` 可查询）；异步参数新增 `short`/`byte`/`char`/`BigInteger`/`BigDecimal`/枚举支持并改进重载匹配；超时检查改用单一调度线程；Promise 生命周期统一由 `Cleaner` 管理。
 - **v2.2.5**：新增回调式消费 API `java.onComplete(id, callback)`，与 `checkPromise` 轮询并存，用户按需二选一；新增 `java.yield(ms)` 等待原语（释放 Lua 锁）；统一 PromiseEntry 生命周期清理。
 - **v2.0**：初始版本，支持静态/实例异步调用、对象池、多返回值。
@@ -404,4 +404,4 @@ A: 放在 `coroutine` 内，主线程循环调用 `java.yield(ms)` 让出 Lua �
 
 ---
 
-*文档最后更新：v2.4.0*
+*文档最后更新：v2.4.1*
