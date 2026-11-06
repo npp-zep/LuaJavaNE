@@ -51,6 +51,7 @@ local id2 = java.promise(true)   -- Object[] 结果展开为多值
 - `class_name` (string)：类的全限定名，如 `"java.lang.Integer"`。
 - `method_name` (string)：方法名。特殊方法名 `"new"` 表示调用构造器。
 - `...` (可变参数)：传递给 Java 方法的参数。每个参数在 Lua 中提供**值和类型提示**（自动推断），底层会按顺序匹配。
+  支持 `String`、`boolean`、整数（`int`/`long`/`short`/`byte` 及包装类）、`float`/`double`、`char`/`Character`、`BigInteger`/`BigDecimal`，以及枚举（按常量名，如 `"RED"`）。超出目标类型范围或无法解析时，任务返回 `no matching method: ... (原因)`。
 
 **返回值**：无（任务提交后立即返回）。
 

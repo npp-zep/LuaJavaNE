@@ -156,20 +156,22 @@ static char get_type_hint(lua_State* L, int idx) {
 // 把 Lua 参数转成字符串传给 Java，配合 get_type_hint 的类型提示。
 // 数值使用足够精度（整数 %lld、浮点 %.17g），避免 lua_tostring 的精度损失；
 // 布尔转为 "true"/"false"；其他类型按 lua_tostring 处理（表/函数为 ""）。
+// 仅真正的 Lua number 才按数值渲染：lua_isnumber 会把可转数字的字符串也当成数字，
+// 导致 "123..." 这样的字符串按 %.17g 丢精度（与 'S' 类型提示不一致）。
 static const char* arg_to_string(lua_State* L, int idx, char* buf, size_t bufsz) {
+    if (lua_type(L, idx) != LUA_TNUMBER) {
+        if (lua_type(L, idx) == LUA_TBOOLEAN) {
+            return lua_toboolean(L, idx) ? "true" : "false";
+        }
+        const char* s = lua_tostring(L, idx);
+        return s ? s : "";
+    }
     if (lua_isinteger(L, idx)) {
         snprintf(buf, bufsz, "%lld", (long long)lua_tointeger(L, idx));
         return buf;
     }
-    if (lua_isnumber(L, idx)) {
-        snprintf(buf, bufsz, "%.17g", (double)lua_tonumber(L, idx));
-        return buf;
-    }
-    if (lua_type(L, idx) == LUA_TBOOLEAN) {
-        return lua_toboolean(L, idx) ? "true" : "false";
-    }
-    const char* s = lua_tostring(L, idx);
-    return s ? s : "";
+    snprintf(buf, bufsz, "%.17g", (double)lua_tonumber(L, idx));
+    return buf;
 }
 
 int java_runAsync(lua_State* L) {

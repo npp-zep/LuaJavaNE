@@ -121,7 +121,11 @@ public class AsyncRunner {
             else if (pts[i] == int.class && args[i] instanceof Integer) score += 8;
             else if (pts[i] == long.class && args[i] instanceof Long) score += 8;
             else if (pts[i] == double.class && args[i] instanceof Double) score += 8;
+            else if (pts[i] == float.class && args[i] instanceof Float) score += 8;
             else if (pts[i] == boolean.class && args[i] instanceof Boolean) score += 8;
+            else if (pts[i] == short.class && args[i] instanceof Short) score += 8;
+            else if (pts[i] == byte.class && args[i] instanceof Byte) score += 8;
+            else if (pts[i] == char.class && args[i] instanceof Character) score += 8;
             else if (pts[i] == String.class && args[i] instanceof String) score += 5;
             else score += 1;
         }
@@ -156,15 +160,48 @@ public class AsyncRunner {
             if (t == long.class || t == Long.class) {
                 return h == 'D' ? integralFromDouble(v, Long.class) : Long.parseLong(v);
             }
+            if (t == short.class || t == Short.class) {
+                return h == 'D' ? integralFromDouble(v, Short.class)
+                                : integralInRange(v, Short.MIN_VALUE, Short.MAX_VALUE, Short.class);
+            }
+            if (t == byte.class || t == Byte.class) {
+                return h == 'D' ? integralFromDouble(v, Byte.class)
+                                : integralInRange(v, Byte.MIN_VALUE, Byte.MAX_VALUE, Byte.class);
+            }
+            if (t == char.class || t == Character.class) {
+                if (v.length() != 1) {
+                    throw new NumberFormatException("expected a single character: '" + v + "'");
+                }
+                return v.charAt(0);
+            }
             if (t == double.class || t == Double.class) return Double.parseDouble(v);
             if (t == float.class || t == Float.class) return Float.parseFloat(v);
             if (t == boolean.class || t == Boolean.class) return Boolean.parseBoolean(v);
             if (t == byte[].class) return v.getBytes();
-        } catch (NumberFormatException nfe) {
+            if (t == java.math.BigInteger.class) return new java.math.BigInteger(v.trim());
+            if (t == java.math.BigDecimal.class) return new java.math.BigDecimal(v.trim());
+            if (t.isEnum()) return enumValue(t, v);
+        } catch (IllegalArgumentException nfe) {
             throw new TypeConversionError(
                     "cannot convert '" + v + "' to " + t.getSimpleName(), nfe);
         }
         return null;
+    }
+
+    // 解析整数并校验目标类型范围（short/byte 等）
+    private static Number integralInRange(String v, long min, long max, Class<?> t) {
+        long value = Long.parseLong(v);
+        if (value < min || value > max) {
+            throw new NumberFormatException("out of " + t.getSimpleName() + " range: " + v);
+        }
+        if (t == Short.class) return (short) value;
+        return (byte) value;
+    }
+
+    // 枚举参数：按常量名匹配（区分大小写）
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Object enumValue(Class<?> t, String v) {
+        return Enum.valueOf((Class<? extends Enum>) t, v);
     }
 
     // 依据 Lua 侧类型提示（I/D/Z/S）还原 Object 参数；无法解析时退回原始字符串
@@ -190,6 +227,18 @@ public class AsyncRunner {
                 throw new NumberFormatException("out of int range: " + v);
             }
             return (int) d;
+        }
+        if (t == Short.class) {
+            if (d < Short.MIN_VALUE || d > Short.MAX_VALUE) {
+                throw new NumberFormatException("out of short range: " + v);
+            }
+            return (short) d;
+        }
+        if (t == Byte.class) {
+            if (d < Byte.MIN_VALUE || d > Byte.MAX_VALUE) {
+                throw new NumberFormatException("out of byte range: " + v);
+            }
+            return (byte) d;
         }
         if (d < Long.MIN_VALUE || d > Long.MAX_VALUE) {
             throw new NumberFormatException("out of long range: " + v);
