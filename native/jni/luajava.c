@@ -491,30 +491,25 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1close(JNIEnv* env, jobject 
 // ========== LuaRuntime._setGlobal ==========
 JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1setGlobal(JNIEnv* env, jobject obj,
                                                                 jlong Lptr, jstring name,
-                                                                jstring value) {
+                                                                jobject value) {
     LUA_LOCK();
     lua_State* L = (lua_State*)(uintptr_t)Lptr;
     const char* k = (*env)->GetStringUTFChars(env, name, NULL);
-    const char* v = (*env)->GetStringUTFChars(env, value, NULL);
-    lua_pushstring(L, v);
+    push_java_arg(L, env, value);
     lua_setglobal(L, k);
     (*env)->ReleaseStringUTFChars(env, name, k);
-    (*env)->ReleaseStringUTFChars(env, value, v);
     LUA_UNLOCK();
 }
 
-// ========== LuaRuntime._getGlobal ==========
-JNIEXPORT jstring JNICALL Java_com_luajava_LuaRuntime__1getGlobal(JNIEnv* env, jobject obj,
-                                                                   jlong Lptr, jstring name) {
+// ========== LuaRuntime._getGlobalObject ==========
+JNIEXPORT jobject JNICALL Java_com_luajava_LuaRuntime__1getGlobalObject(JNIEnv* env, jobject obj,
+                                                                         jlong Lptr, jstring name) {
     LUA_LOCK();
     lua_State* L = (lua_State*)(uintptr_t)Lptr;
     const char* k = (*env)->GetStringUTFChars(env, name, NULL);
     lua_getglobal(L, k);
     (*env)->ReleaseStringUTFChars(env, name, k);
-    jstring result = NULL;
-    if (lua_isstring(L, -1)) {
-        result = (*env)->NewStringUTF(env, lua_tostring(L, -1));
-    }
+    jobject result = lua_to_java_object(L, env, -1);
     lua_pop(L, 1);
     LUA_UNLOCK();
     return result;

@@ -83,21 +83,28 @@ Object[] results = L.callFunctionMultiple("swap", "hello", "world");
 
 ## 4. 操作 Lua 全局变量
 
-### 4.1 设置全局变量（仅支持字符串值）
+### 4.1 设置全局变量（任意 Java 值）
 
 ```java
-L.setGlobal("name", "LuaJava");
-// 对应 Lua: name = "LuaJava"
+L.setGlobal("name", "LuaJava");   // Lua: name = "LuaJava"
+L.setGlobal("count", 42);         // Lua: count = 42（整数）
+L.setGlobal("ratio", 0.5);        // Lua: ratio = 0.5（浮点）
+L.setGlobal("enabled", true);     // Lua: enabled = true
+L.setGlobal("buf", new StringBuilder("hi"));
+L.setGlobal("arr", new int[] {1, 2, 3});  // Java.Array，0 基索引
+L.setGlobal("nothing", null);     // Lua: nothing = nil
 ```
 
-> **注意**：`setGlobal` 目前仅支持字符串。若需设置其他类型，请通过执行 `doString` 完成，或使用注解注册的 Java 方法。
+字符串、数字、布尔按 Lua 原生类型压栈；其他对象（含数组、Map/List）按 Lua 侧 Java userdata 规则包装。
 
-### 4.2 读取全局变量（返回字符串）
+### 4.2 读取全局变量
 
 ```java
-String version = L.getGlobal("_VERSION");
-System.out.println(version); // "Lua 5.4.8"
+String version = L.getGlobal("_VERSION");   // "Lua 5.4.8"
+Object count = L.getGlobalObject("count");  // Integer 42
 ```
+
+`getGlobal` 保留原行为，把值转成字符串；需要原始类型（数字、布尔、Java 对象、LuaTable/LuaFunctionObj）时使用 `getGlobalObject`。Lua 的 `nil` 在两种方法下都返回 `null`。
 
 ---
 

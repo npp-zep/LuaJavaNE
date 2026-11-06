@@ -116,12 +116,17 @@ public class LuaRuntime implements AutoCloseable {
         }
     }
 
-    public void setGlobal(String name, String value) {
+    public void setGlobal(String name, Object value) {
         _setGlobal(statePtr, name, value);
     }
 
     public String getGlobal(String name) {
-        return _getGlobal(statePtr, name);
+        Object v = _getGlobalObject(statePtr, name);
+        return v == null ? null : String.valueOf(v);
+    }
+
+    public Object getGlobalObject(String name) {
+        return _getGlobalObject(statePtr, name);
     }
 
     public Object callFunction(String name, Object... args) {
@@ -161,8 +166,8 @@ public class LuaRuntime implements AutoCloseable {
     private native long _newState();
     private native void _doString(long L, String s);
     private native void _close(long L);
-    private native void _setGlobal(long L, String n, String v);
-    private native String _getGlobal(long L, String n);
+    private native void _setGlobal(long L, String n, Object v);
+    private native Object _getGlobalObject(long L, String n);
     private native int _compile(long L, String code);
     private native void _doFile(long L, String path);
     private native void _registerCallback(long L, String name, LuaJavaCallback cb);
