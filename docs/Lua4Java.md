@@ -104,7 +104,7 @@ String version = L.getGlobal("_VERSION");   // "Lua 5.4.8"
 Object count = L.getGlobalObject("count");  // Integer 42
 ```
 
-`getGlobal` 保留原行为，把值转成字符串；需要原始类型（数字、布尔、Java 对象、LuaTable/LuaFunctionObj）时使用 `getGlobalObject`。Lua 的 `nil` 在两种方法下都返回 `null`。
+`getGlobal` 保留原行为，把值转成字符串；需要原始类型（数字、布尔、Java 对象、LuaTable/LuaFunctionObj）时使用 `getGlobalObject`。Lua 的 `nil` 在两种方法下都返回 `null`。Lua 整数在 32 位范围内返回 `Integer`，超出范围返回 `Long`（完整 64 位值）。
 
 ---
 

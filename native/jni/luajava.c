@@ -11,6 +11,7 @@ extern void java_promise_cleanup_state(lua_State* L);
 #include "com_luajava_LuaInvocationHandler.h"
 #include "com_luajava_LuaTable.h"
 #include <stdint.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
@@ -263,9 +264,18 @@ jobject lua_to_java_object(lua_State* L, JNIEnv* env, int idx) {
         }
         case LUA_TNUMBER: {
             if (lua_isinteger(L, idx)) {
-                jclass cls = (*env)->FindClass(env, "java/lang/Integer");
-                jmethodID m = (*env)->GetStaticMethodID(env, cls, "valueOf", "(I)Ljava/lang/Integer;");
-                jobject v = (*env)->CallStaticObjectMethod(env, cls, m, (jint)lua_tointeger(L, idx));
+                lua_Integer iv = lua_tointeger(L, idx);
+                // 超出 32 位范围时必须装箱为 Long，否则 (jint) 强转会静默截断。
+                if (iv >= INT_MIN && iv <= INT_MAX) {
+                    jclass cls = (*env)->FindClass(env, "java/lang/Integer");
+                    jmethodID m = (*env)->GetStaticMethodID(env, cls, "valueOf", "(I)Ljava/lang/Integer;");
+                    jobject v = (*env)->CallStaticObjectMethod(env, cls, m, (jint)iv);
+                    (*env)->DeleteLocalRef(env, cls);
+                    return v;
+                }
+                jclass cls = (*env)->FindClass(env, "java/lang/Long");
+                jmethodID m = (*env)->GetStaticMethodID(env, cls, "valueOf", "(J)Ljava/lang/Long;");
+                jobject v = (*env)->CallStaticObjectMethod(env, cls, m, (jlong)iv);
                 (*env)->DeleteLocalRef(env, cls);
                 return v;
             } else {
