@@ -2,7 +2,7 @@
 
 All notable changes to LuaJavaNE will be documented in this file.
 
-## [Unreleased]
+## [2.5.0] - 2026-11-08
 
 ### Added
 - **`java.load(path, ...)`**: attaches JAR/ZIP files or plain class directories to a process-wide `URLClassLoader` at runtime, so `java.import`, `java.createProxy` and `java.runAsync` can reach classes that are not on the startup classpath. Accepts multiple paths, de-duplicates by absolute path, returns the number of newly added entries, and raises a Lua error with the concrete reason on failure. `java.import` now falls back to that loader when JNI `FindClass` misses (the JNI loader cannot see runtime-added URLs).
