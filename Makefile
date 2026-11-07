@@ -12,7 +12,7 @@ JAVAC_BIN := $(JAVA_HOME)/bin/javac
 BUILD_DIR = build
 OUT_DIR = out
 LIB_DIR = lib
-JAVA_SRC = java/src/com/luajava
+JAVA_SRC = java/src
 TEST_SRC = test
 
 JLINE_JAR = $(LIB_DIR)/jline.jar
@@ -80,7 +80,9 @@ test: all
 	     --select-class=com.luajava.PromiseTest \
 	     --select-class=com.luajava.AsyncTest \
 	     --select-class=com.luajava.AgentTest \
-	     --select-class=com.luajava.CallbackTest
+	     --select-class=com.luajava.CallbackTest \
+	     --select-class=com.luajava.TableBridgeTest \
+	     --select-class=com.luajava.ReplInputTest
 	@echo ""
 	@echo "All JUnit tests passed."
 
@@ -153,28 +155,27 @@ deb: all
 	@echo "========================================"
 	@rm -rf $(DEB_DIR)
 	@mkdir -p $(DEB_DIR)/DEBIAN $(DEB_PREFIX)/lib $(DEB_PREFIX)/docs $(DEB_PREFIX)/examples $(DEB_DIR)/$(DEB_ARCHIVE_PREFIX)/bin
-	# Termux 等默认 umask=077，需显式修正权限（dpkg-deb 要求 DEBIAN 目录 0755~0775）
+	@echo "  [1/6] fixing permissions (umask 077 on Termux)"
 	@chmod -R u=rwX,go=rX $(DEB_DIR)
-	# 启动脚本（与 release 布局一致，luaj.sh 按脚本目录查找依赖）
+	@echo "  [2/6] installing launcher scripts"
 	install -m 0755 luaj.sh $(DEB_PREFIX)/luaj.sh
 	install -m 0755 select_jdk.sh $(DEB_PREFIX)/select_jdk.sh
-	# bin/luaj 包装脚本（luaj.sh 用 dirname $0 定位，不能直接符号链接）
 	@printf '#!/bin/sh\nexec /$(DEB_ARCHIVE_PREFIX)/share/$(PACKAGE_NAME)/luaj.sh "$$@"\n' > $(DEB_DIR)/$(DEB_ARCHIVE_PREFIX)/bin/luaj
 	@chmod 0755 $(DEB_DIR)/$(DEB_ARCHIVE_PREFIX)/bin/luaj
-	# 运行时库与 jar
+	@echo "  [3/6] installing runtime library and jars"
 	install -m 0644 build/luajava.$(LIB_EXT) $(DEB_PREFIX)/luajava.$(LIB_EXT)
 	install -m 0644 luajava.jar $(DEB_PREFIX)/luajava.jar
 	install -m 0644 lib/jline.jar $(DEB_PREFIX)/lib/jline.jar
-	# 配置与文档
+	@echo "  [4/6] installing config and docs"
 	install -m 0644 version.properties $(DEB_PREFIX)/version.properties
 	install -m 0644 LICENSE $(DEB_PREFIX)/LICENSE
 	cp -r docs/* $(DEB_PREFIX)/docs/
 	cp -r examples/* $(DEB_PREFIX)/examples/
-	# DEBIAN/control
+	@echo "  [5/6] writing DEBIAN/control"
 	@printf 'Package: %s\nVersion: %s\nSection: interpreters\nPriority: optional\nArchitecture: %s\nMaintainer: %s <%s>\nDepends: default-jre-headless (>= 17) | openjdk-17-jre-headless | openjdk-21-jre-headless | openjdk-17 | openjdk-21 | openjdk-25\nHomepage: %s\nDescription: Lua 5.4 <-> Java bidirectional interop engine (REPL + library)\n LuaJavaNE lets Lua call Java methods and Java call Lua functions directly,\n with async task support, dynamic proxies, a cross-state store and a\n SIMD-accelerated math library (clac). Ships the luaj REPL and the\n luajava library for embedding.\n' \
 	    $(PACKAGE_NAME) $(PROJECT_VERSION) $(DEB_ARCH) "npp-zep" "264519049@qq.com" "https://github.com/npp-zep/LuaJavaNE" > $(DEB_DIR)/DEBIAN/control
 	@chmod 0644 $(DEB_DIR)/DEBIAN/control
-	# 打包（文件属主统一为 root:root）
+	@echo "  [6/6] running dpkg-deb"
 	dpkg-deb --build --root-owner-group $(DEB_DIR) $(DEB_FILE)
 	@rm -rf $(DEB_DIR)
 	@echo "Debian package created: $(DEB_FILE)"

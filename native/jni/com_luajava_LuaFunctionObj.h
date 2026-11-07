@@ -17,11 +17,11 @@ JNIEXPORT jobjectArray JNICALL Java_com_luajava_LuaFunctionObj_callMultipleNativ
 
 /*
  * Class:     com_luajava_LuaFunctionObj
- * Method:    destroyNative
- * Signature: ()V
+ * Method:    releaseNative
+ * Signature: (JI)V
  */
-JNIEXPORT void JNICALL Java_com_luajava_LuaFunctionObj_destroyNative
-  (JNIEnv *, jobject);
+JNIEXPORT void JNICALL Java_com_luajava_LuaFunctionObj_releaseNative
+  (JNIEnv *, jclass, jlong, jint);
 
 #ifdef __cplusplus
 }

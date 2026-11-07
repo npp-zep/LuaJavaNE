@@ -587,6 +587,33 @@ public class AgentTest extends BaseTest {
     }
     
     @Test
+    @Timeout(20)
+    void testPinnedPoolEvictionIsObservable() throws Exception {
+        cleanup();
+        
+        LuaAgent.init();
+        
+        int firstId = LuaAgent.registerObjectStrong(new Object());
+        int lastId = firstId;
+        // 超过池上限，触发最旧条目 FIFO 淘汰
+        for (int i = 0; i < 10000; i++) {
+            lastId = LuaAgent.registerObjectStrong(new Object());
+        }
+        
+        // 被淘汰的 id：getObject 返回 null，但可通过 wasEvicted 区分于“不存在/已取走”
+        assertNull(LuaAgent.getObject(firstId));
+        assertTrue(LuaAgent.wasEvicted(firstId));
+        assertTrue(LuaAgent.getEvictedObjectCount() >= 1);
+        assertTrue(LuaAgent.getRegistryStats().contains("Pinned: 10000"));
+        
+        // 仍在池中的最新条目可正常取出，且不会被误判为淘汰
+        assertFalse(LuaAgent.wasEvicted(lastId));
+        assertNotNull(LuaAgent.getObject(lastId));
+        
+        LuaAgent.shutdown();
+    }
+    
+    @Test
     @Timeout(5)
     void testRegistryCleanedOnShutdown() throws Exception {
         cleanup();

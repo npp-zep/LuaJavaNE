@@ -167,6 +167,12 @@ local obj = java.getObject(oid)   -- 获取 userdata
 print(obj:length())               -- 5
 ~~~
 
+### 异步参数类型
+
+- 标量：`string`、`number`、`boolean`、`char` 等按类型提示自动匹配。
+- Java 对象/数组：直接传 userdata，底层登记到参数对象池并以对象 id 传递，任务结束后自动释放；会按目标形参类型做赋值检查。
+- `table` / `function` 不能作为异步参数，会被字符串化或转成空字符串。
+
 ### 多返回值
 
 ~~~lua
@@ -185,6 +191,13 @@ print(a, b, c)  -- a   b   c
 ~~~lua
 java.runAsync(id, "java.lang.NonExistent", "foo", "")
 -- checkPromise 返回: "java.lang.NonExistent.foo -> ClassNotFoundException: java.lang.NonExistent"
+~~~
+
+Lua 同步调用 Java 方法抛出异常时，会得到包含类型与消息的 Lua 错误，可用 `pcall` 捕获：
+
+~~~lua
+local ok, err = pcall(function() return obj:riskyMethod() end)
+-- err 形如: Java exception in riskyMethod: java.lang.IllegalStateException: detail
 ~~~
 
 同步调用（Java 侧）的错误则抛出结构化异常，全部继承 `RuntimeException`，对既有
@@ -220,6 +233,26 @@ local done = false
 java.onComplete(id, function(err, result) done = true end)
 while not done do java.yield(10) end
 ~~~
+
+### 协程等待（java.await）
+
+`java.await(id)` 在协程内挂起，Java 任务完成后由工作线程恢复协程，适合顺序化写法：
+
+~~~lua
+local co = coroutine.create(function()
+    local id = java.promise()
+    java.runAsync(id, "java.lang.Thread", "sleep", 200)
+    java.await(id)                       -- 挂起，任务完成后恢复
+    print("done")
+end)
+coroutine.resume(co)
+while coroutine.status(co) ~= "dead" do java.yield(5) end
+~~~
+
+- 任务已完成时立即返回，结果语义与 `checkPromise` 一致；
+- 任务失败时返回 `E:` 后的错误文本（不抛出异常）；
+- 在非协程环境等待未完成的任务会报 `attempt to yield from outside a coroutine`；
+- 主线程仍需用 `java.yield` 让出 Lua 锁，否则工作线程无法恢复协程。
 
 ---
 
@@ -258,6 +291,8 @@ local d = clac.batch_sin(a)     -- 逐元素求正弦
 | 取整 | batch_floor, batch_ceil, batch_round, batch_trunc, batch_rint |
 | 特殊函数 | batch_erf, batch_erfc, batch_tgamma, batch_lgamma |
 | 其他 | batch_sqrt, batch_cbrt, batch_pow, batch_atan2, batch_hypot |
+
+批量运算在数组长度 ≥ 4096 时自动启用 OpenMP 多线程（`OMP_NUM_THREADS` 可调）；数学函数使用 Sleef AVX2 向量内核（`batch_sqrt`/`batch_abs` 直接使用硬件指令），尾部元素与不支持 AVX2 的环境自动回退标量，结果一致。
 
 ---
 
@@ -377,11 +412,14 @@ luaj -h                 # 帮助
 
 | 快捷键 | 功能 |
 |--------|------|
-| ↑ ↓ | 浏览历史 |
+| ↑ ↓ | 在物理行间移动；到达首/末行后浏览历史 |
 | Ctrl+R | 搜索历史 |
+| 空行回车 | 提交多行语句块（单行完整语句回车即执行） |
 | \q | 退出 |
 | = 1+2 | 打印表达式结果 |
 | help / copyright / license | 查看信息 |
+
+多行输入时续行提示符为 `>> `，并按 Lua 关键字自动缩进；未闭合的字符串/括号会保持续行，Ctrl+C 放弃当前未提交的块。整块作为一条历史记录保存。
 
 ---
 
@@ -393,9 +431,14 @@ luaj -h                 # 帮助
 | number | Double / double 双向 |
 | string | String 双向 |
 | boolean | Boolean 双向 |
+| string（单个码点）或 integer | char / Character 双向 |
 | nil | null / void 返回 |
 | userdata | Java 对象 双向 |
 | function | LuaFunctionObj Lua → Java |
+| table | LuaTable（Lua → Java 惰性引用） |
+| Map / List / Collection（Java 返回） | 惰性容器 userdata（读取/遍历/写回/追加，可存 Lua 函数读回可调用） |
+
+> 字符串按标准 UTF-8 双向转换：emoji 等增补平面字符（4 字节 UTF-8）可正确往返；非法 UTF-8 或孤立 UTF-16 代理项会替换为 `U+FFFD`。Java `char` 只能表示 BMP 字符。
 
 ---
 
@@ -420,17 +463,19 @@ luaj -h                 # 帮助
 |------|------|
 | java.import("类名") | 导入 Java 类 |
 | 类:new(...) | 调用构造方法 |
-| 对象:方法(...) | 调用实例方法 |
+| 对象:方法(...) / 对象(...) | 调用实例方法；对象可直接调用（`__call`，调用其 `call` 方法） |
 | 类.静态方法(...) / 类:静态方法(...) | 调用静态方法（冒号形式自动剥离类 self 参数） |
 | java.createProxy({接口...}, 表) | Lua 表实现 Java 接口 |
 | java.newArray("类型", 大小) | 创建 Java 数组 |
+| java.import("com.luajava.LuaTable") | Java 侧以 LuaTable 接收 Lua 表（活引用，见 docs/Java4Lua.md 第 8 节） |
+| 容器（Java 返回的 Map/List） | JavaTable 惰性容器：读取/遍历/写回/`#`，`l[#l+1]=v` 追加，可存 Lua 函数读回可调用 |
 | java.promise() | 创建异步 Promise |
 | java.runAsync(id, class, method, args...) | 异步调用静态方法 |
 | java.runAsyncObj(id, obj, method, args...) | 异步调用实例方法 |
 | java.checkPromise(id) | 轮询 Promise 结果 |
 | java.onComplete(id, callback) | 注册完成回调（事件驱动） |
 | java.complete(id, value) | 手动完成一个 Promise |
-| java.await(id) | 协程内阻塞等待 Promise 完成 |
+| java.await(id) | 协程内挂起等待 Promise 完成（任务完成后由工作线程恢复协程） |
 | java.yield(ms) | 释放 Lua 锁等待，让后台回调执行 |
 | java.getObject(id) | 获取异步构造的对象 |
 | java.toString(obj) | 获取对象的字符串表示 |
@@ -438,6 +483,7 @@ luaj -h                 # 帮助
 | java.fetch(key) | 读取跨状态存储值 |
 | java.listall() | 列出所有存储键值对（返回 key -> value 表） |
 | java.deleteStore(key) | 删除跨状态存储键 |
+| java.cleanup() | 清空跨状态存储的全部键值 |
 
 ### Lua 侧 clac 库
 
@@ -484,6 +530,11 @@ luaj -h                 # 帮助
 
 要求：JDK 17+、CMake 3.14+、GCC/Clang、pthread。
 
+可选依赖（缺失时自动回退，不影响构建）：
+
+- **OpenMP** — `clac` 批量运算多线程（GCC 自带 `libgomp`）
+- **Sleef** — `clac` 批量数学的 AVX2 向量内核（需同时具备 `sleef.h` 与 `libsleef`，`-DLUAJAVA_ENABLE_SLEEF=OFF` 可关闭）
+
 ~~~bash
 git clone https://github.com/npp-zep/LuaJavaNE.git
 cd LuaJavaNE
@@ -495,10 +546,40 @@ make test   # 运行测试
 
 ---
 
-## 已知限制
+## 已知问题与限制
 
-- 常规签名匹配失败时自动回退反射调用，支持任意返回类型（如 `java.math`）；极少数高度动态的重载仍可能不精确
-- Termux/Android 环境下线程数上限约 200（受系统限制）
+### 参数匹配与重载
+
+- 6 个参数以内优先走快速签名匹配；**7 个及以上自动回退到反射调用**，结果正确但性能低于快路径。
+- 反射回退按“精确度打分”选择重载；泛型擦除、可变参数或高度动态的同名方法仍可能选不到预期版本，失败时报 `no matching method: ... (原因)`。
+- 调用 Java 方法抛出的异常会以 Lua 错误形式抛出，信息包含 `java.lang.异常类: message`；异步任务的错误格式为 `类名.方法 -> 异常类型: 消息`。
+
+### 多线程与 Lua 状态
+
+- 所有 `LuaRuntime` 实例共享一把递归 `lua_mutex`：一个状态长时间执行 Lua 代码会阻塞其他状态的调用和回调。
+- 异步回调、代理回调与 `java.await` 恢复都依赖主线程用 `java.yield(ms)` 让出锁；持锁死等会形成死锁。
+- 同一个 `LuaRuntime` 不应被多个线程同时直接操作（Lua 状态本身非线程安全）。
+- `java.store` 是**进程级全局表**（跨状态共享是设计特性），不随单个 `LuaRuntime` 关闭而清空；可用 `java.cleanup()` 整体清空。
+
+### 异步 API
+
+- Lua 侧未暴露取消和超时参数；底层默认超时 300 秒。
+- 对象参数通过参数对象池传递，任务结束由 `AsyncRunner` 释放；若线程池直接拒绝任务（`AbortPolicy`），引用可能残留到进程结束（极端边界）。
+- `table` / `function` 不能作为异步参数；会被字符串化或转成空字符串。
+- `java.await` 失败时返回 `E:` 后的错误文本而不是抛出异常；非协程环境等待未完成任务会报 `attempt to yield from outside a coroutine`。
+- `onComplete` 回调运行在工作线程，必须快速返回；耗时操作应再次 `runAsync`。
+
+### Unicode 与字符串
+
+- Java `String` 中的 NUL 可保留在 Lua 字符串中，但部分按 C 字符串处理的 API（如 `luaL_checkstring` 路径）可能截断。
+- 非法 UTF-8 字节序列、孤立代理项统一替换为 `U+FFFD`，不做报错。
+- Java `char` / `Character` 只能表示 BMP 码点；Lua 侧传入增补平面字符时只能取高代理项。
+
+### 平台与构建
+
+- Termux/Android 环境下线程数上限约 200（受系统限制）。
+- OpenMP、Sleef 为可选依赖，缺失时自动回退到串行/标量实现，性能下降但功能不变。
+- 项目绑定 Lua 5.4.x；升级 Lua 需整体替换 `lua/lua-5.x` 目录（Lua 源码零改动）。
 
 ---
 

@@ -5,6 +5,33 @@ import static org.junit.jupiter.api.Assertions.*;
 
 public class AsyncTest extends BaseTest {
 
+    public enum Color { RED, GREEN }
+
+    /** 供异步参数转换测试使用的静态方法，覆盖 short/byte/char/BigDecimal/BigInteger/enum。 */
+    public static String primArgs(short s, byte b, char c,
+                                  java.math.BigDecimal d, java.math.BigInteger i, Color e) {
+        return s + "|" + b + "|" + c + "|" + d + "|" + i + "|" + e;
+    }
+
+    @Test
+    void asyncExtendedPrimitiveArguments() {
+        L.doString("id = java.promise()");
+        L.doString("java.runAsync(id, 'com.luajava.AsyncTest', 'primArgs', "
+                + "7, 3, 'Z', 1.5, '123456789012345678901234567890', 'RED')");
+        L.doString("repeat done, result = java.checkPromise(id) until done");
+        assertEquals("7|3|Z|1.5|123456789012345678901234567890|RED", L.getGlobal("result"));
+    }
+
+    @Test
+    void asyncExtendedPrimitiveOutOfRange() {
+        L.doString("id = java.promise()");
+        L.doString("java.runAsync(id, 'com.luajava.AsyncTest', 'primArgs', "
+                + "7, 300, 'Z', 1.5, '1', 'RED')");
+        L.doString("repeat done, result = java.checkPromise(id) until done");
+        assertTrue(L.getGlobal("result").contains("no matching method"));
+        assertTrue(L.getGlobal("result").contains("byte"));
+    }
+
     @Test
     void asyncConstructor() {
         L.doString("id = java.promise()");

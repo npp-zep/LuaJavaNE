@@ -39,8 +39,12 @@ JLINE_PATH="$SCRIPT_DIR/lib/jline.jar"
 
 # ============================================================
 # 构建 classpath（包含当前目录，让用户编译的 .class 文件能被找到）
+# 若存在 out/（make 编译产物，如 TestBridge）也一并加入
 # ============================================================
 CLASS_PATH=".:$JAR_PATH:$JLINE_PATH"
+if [ -d "$SCRIPT_DIR/out" ]; then
+    CLASS_PATH="$CLASS_PATH:$SCRIPT_DIR/out"
+fi
 
 # ============================================================
 # 检测 LuaRocks 和 Lua 路径

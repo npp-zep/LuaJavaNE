@@ -13,6 +13,7 @@ typedef struct PromiseEntry {
     lua_State* owner;       // 创建/注册回调所属的 Lua 状态
     int callbackRef;        // 回调闭包在 owner 注册表中的引用，LUA_NOREF 表示无
     int done;
+    int expandArrays;       // java.promise(true)：Object[] 结果展开为多值
     char* result;
     struct PromiseEntry* next;
 } PromiseEntry;
@@ -33,11 +34,14 @@ extern int java_checkPromise(lua_State* L);
 extern int java_getObject(lua_State* L);
 extern void java_promise_cleanup_state(lua_State* L);   // 状态关闭时清理其回调引用
 extern void dispatch_callback(lua_State* owner, int cbRef, const char* result); // 派发回调闭包
+extern int java_push_parsed_result(lua_State* L, const char* r); // 解析结果串并按需压栈
 
 // ========== lualibjava.c 导出的函数 ==========
 extern int luaopen_java(lua_State* L);
 extern int new_java_object_ud(lua_State* L, jobject obj);
 extern jobject java_get_obj(lua_State* L, int idx);
+extern jobject java_ud_to_object(lua_State* L, int idx);   // Java userdata → 新局部引用（调用方删除），否则 NULL
+extern int java_table_dispatch(lua_State* L, jobject obj);   // Map/List → JavaTable，其余 → Java userdata
 extern PromiseEntry* promise_find(int id);   // 调用方须持有 promise_mutex
 extern void promise_remove(PromiseEntry* e); // 调用方须持有 promise_mutex
 

@@ -1,6 +1,7 @@
 package com.luajava;
 
 import java.io.File;
+import java.lang.ref.Cleaner;
 import java.lang.reflect.Method;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
@@ -82,10 +83,15 @@ public class LuaRuntime implements AutoCloseable {
     }
 
     long statePtr; // 包访问，供 JNI 使用
+    private final Cleaner.Cleanable cleanable;
+    private static final Cleaner CLEANER = Cleaner.create();
 
     public LuaRuntime() {
         LuaAgent.init(); // 确保线程池已初始化（共享）
         statePtr = _newState();
+        long createdState = statePtr;
+        // Cleaner 只捕获状态指针，不引用 LuaRuntime 自身，避免阻止回收
+        cleanable = CLEANER.register(this, () -> _close(createdState));
     }
 
     public void doString(String script) {
@@ -99,29 +105,22 @@ public class LuaRuntime implements AutoCloseable {
     @Override
     public void close() {
         if (statePtr != 0) {
-            _close(statePtr);
             statePtr = 0;
+            cleanable.clean(); // 显式 close 与 GC 清理共用同一个 Cleanable，最多执行一次
         }
     }
 
-    @Override
-    protected void finalize() throws Throwable {
-        try {
-            if (statePtr != 0) {
-                LOGGER.warning("LuaRuntime finalized without explicit close() – resource leak");
-                close();
-            }
-        } finally {
-            super.finalize();
-        }
-    }
-
-    public void setGlobal(String name, String value) {
+    public void setGlobal(String name, Object value) {
         _setGlobal(statePtr, name, value);
     }
 
     public String getGlobal(String name) {
-        return _getGlobal(statePtr, name);
+        Object v = _getGlobalObject(statePtr, name);
+        return v == null ? null : String.valueOf(v);
+    }
+
+    public Object getGlobalObject(String name) {
+        return _getGlobalObject(statePtr, name);
     }
 
     public Object callFunction(String name, Object... args) {
@@ -160,9 +159,9 @@ public class LuaRuntime implements AutoCloseable {
     // ---------- native methods ----------
     private native long _newState();
     private native void _doString(long L, String s);
-    private native void _close(long L);
-    private native void _setGlobal(long L, String n, String v);
-    private native String _getGlobal(long L, String n);
+    private static native void _close(long L);
+    private native void _setGlobal(long L, String n, Object v);
+    private native Object _getGlobalObject(long L, String n);
     private native int _compile(long L, String code);
     private native void _doFile(long L, String path);
     private native void _registerCallback(long L, String name, LuaJavaCallback cb);

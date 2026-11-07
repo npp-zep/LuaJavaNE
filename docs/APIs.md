@@ -23,7 +23,13 @@
 
 ## clac —— 高性能数学计算库
 
-`clac` 是一个完整的 C99 `<math.h>` 包装库，支持标量运算和批量数组运算。批量运算使用 **Sleef SIMD 库** 进行加速，在支持的 CPU 上可获得 **83 倍以上的性能提升**。
+`clac` 是一个完整的 C99 `<math.h>` 包装库，支持标量运算和批量数组运算。批量运算叠加三层加速：
+
+- **手写 SIMD**（x86_64 AVX2 / arm64 NEON）：四则运算 `batch_add/sub/mul/div`
+- **Sleef 向量内核**（`Sleef_*d4_*avx2`）：数学函数，`batch_sqrt`/`batch_abs` 直接使用硬件指令
+- **OpenMP**：元素数 ≥ 4096 时自动多线程（`OMP_NUM_THREADS` 可调）
+
+未启用 Sleef（未找到 `sleef.h` + `libsleef`）或未启用 OpenMP 时自动回退标量/单线程，结果一致。
 
 ### 加载模块
 
@@ -156,7 +162,7 @@ local clac = require("clac")
 
 ### 批量数组运算
 
-`clac` 提供了 `ClacArray` 类型，用于在 C 内存中存储连续的双精度浮点数数组，支持 SIMD 加速的批量运算。
+`clac` 提供了 `ClacArray` 类型，用于在 C 内存中存储连续的双精度浮点数数组，支持 SIMD + OpenMP 加速的批量运算。
 
 #### 创建数组
 
@@ -638,4 +644,4 @@ print("清理后引用数:", gc.count())
 - [Sleef SIMD 库](https://sleef.org/)
 
 ---
-*本文档对应 LuaJavaNE 版本 2.2.6.1。*
+*本文档对应 LuaJavaNE 版本 2.4.1。*

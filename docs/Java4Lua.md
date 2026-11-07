@@ -144,11 +144,100 @@ strArr[1] = "b"
 
 **行为统一**：Java 方法返回的数组（如 `String[]`、`int[]`）与 `java.newArray` 创建的数组使用完全相同的 `Java.Array` 包装，同样支持 0 基索引、`#` 长度和元素读写。元素读取时：`int`/`double`/`boolean` 基本类型转为对应的 Lua 值，`String` 转为 Lua 字符串，其他对象元素包装为 Java 对象 userdata。
 
+**错误处理**：`长度` 为负数时返回 `nil` 与 `array size must be >= 0`；不支持的 `类型名` 返回 `nil` 与 `unsupported array type: 类型名`。
+
 ---
 
-## 8. 动态代理（Lua 表实现 Java 接口）
+## 8. Table 双向互调（Lua ↔ Java）
+
+Lua 的 table 与 Java 的容器/引用之间支持**惰性活引用**互调：传递的是原对象的引用而非拷贝，一侧的读写另一侧实时可见。
+
+### 8.1 Lua table → Java（LuaTable 活引用）
+
+Lua 的 table 可直接作为 Java 参数传入，Java 侧以 `com.luajava.LuaTable` 接收。`LuaTable` 持有 Lua 注册表引用，`get`/`put`/`size`/`keys` 每次经 JNI 直接读写原表。
+
+```lua
+-- Lua 侧：调用接收 LuaTable 的 Java 方法
+local t = { name = "lua", n = 5 }
+TestBridge.analyze(t)   -- Java 读取字段
+TestBridge.touch(t)     -- Java 原地修改
+print(t.x)              -- 50（Java 写入后 Lua 立即可见）
+```
+
+```java
+// Java 侧
+public static void analyze(LuaTable t) {
+    System.out.println(t.get("name")); // "lua"
+    System.out.println(t.size());      // 键数
+}
+public static void touch(LuaTable t) { t.put("x", 50); }
+public static long countKeys(LuaTable t) {
+    return (long) t.keys().length;     // 遍历键
+}
+```
+
+### 8.2 Java Map/List → Lua（JavaTable 惰性代理）
+
+Java 方法返回（或 `@LuaFunction` 模块方法返回）的 `java.util.Map` / `List`，会包装成带 `__index`/`__newindex`/`__len`/`__pairs` 元表的惰性 userdata，Lua 可像普通表一样读取、遍历、取 `#` 长度、写回。
+
+```lua
+local m = TestBridge.makeMap()          -- 返回 Map
+print(m.a)                              -- 读取字段
+print(#m)                               -- Map 取 entry 数量
+for k, v in pairs(m) do print(k, v) end -- 遍历
+m.d = 99                                -- 写回，Java 侧 Map 实时更新
+
+local l = TestBridge.makeList()         -- 返回 List
+print(l[1])                             -- 读取（下标从 1 开始）
+print(#l)                               -- 长度
+for i, v in ipairs(l) do print(i, v) end
+l[2] = "changed"                        -- 写回
+table.insert(l, "x")                    -- 追加（等价 List.add）
+l[#l + 1] = "y"                         -- 追加：l[#l+1] = v 等价 add
+```
+
+写回规则：下标在 `1..#l` 内为**覆盖**（`List.set`），`#l + 1` 为**追加**（`List.add`）；写入 `#l + 1` 之外会明确报错 `list index out of bounds: N (size M)`。读取越界返回 `nil`（用于支撑 `#` 与 `ipairs` 终止）。
+
+> 注意：`Java.Array`（`java.newArray`）索引从 **0** 开始（与 Java 一致）；而 `List` 是下标从 **1** 开始的语义容器（Lua 风格）。两者不同。
+
+### 8.3 table 内函数 & 可调用 Java 对象
+
+**Lua 函数可存进 Java 容器，读回仍是可直接调用的 Lua 函数**：存入 `Map` / `List`（或经 `LuaTable.put` 放回表）的 Lua 函数以注册表引用（`LuaFunctionObj`）持有，读回时还原为原函数。
+
+```lua
+local m = TestBridge.makeMap()
+m.fib = function(n)                      -- 存进 Java Map
+    if n < 2 then return n end
+    return m.fib(n - 1) + m.fib(n - 2)   -- 读回并调用
+end
+print(m.fib(10))                         -- 55
+
+local l = TestBridge.makeList()
+l[1] = function(a, b) return a * b end   -- 存进 Java List
+print(l[1](6, 7))                        -- 42
+```
+
+**Java 对象可直接调用（`__call`）**：`obj(args...)` 会调用其实例方法 `call(args...)`，例如 `java.util.function.Function` 风格的代理对象；对象没有 `call` 方法时明确报错 `method not found: call`。
+
+```lua
+-- 假设 proxy 是实现 Function 的代理（handler 里有 call 函数）
+print(proxy(3))      -- 等价 proxy:call(3)
+```
+
+### 8.4 类型映射小结
+- Lua `table`（作参数/返回值）→ `com.luajava.LuaTable` 惰性引用
+- Java `Map` / `List` / `Collection`（作返回值）→ Lua 惰性容器 userdata
+- 重载方法评分：table 参数优先匹配 `LuaTable`；容器参数可匹配 `Map` / `Collection` 接口
+
+---
+
+## 9. 动态代理（Lua 表实现 Java 接口）
 
 使用 `java.createProxy({接口名列表}, handler表)` 创建 Java 代理对象，其中 `handler` 表需包含对应接口方法的 Lua 函数。接口方法被调用时派发到 handler 表中**同名（区分大小写）**的 Lua 函数，第一个参数 `self` 为 handler 表。
+
+handler 表未定义某个方法时：接口的 `default` 方法执行 Java 默认实现；`toString`/`hashCode`/`equals` 按代理对象自身语义处理（`LuaProxy@<hash>`、identity hash、引用相等）。若 handler 表定义了同名函数，则仍优先派发到 Lua。
+
+**错误处理**：`接口名列表` 必须是**非空**的字符串数组——列表为空（含误把 `handler` 表当第一个参数传入，即 `java.createProxy(handler, {接口...})`）时返回 `nil` 与 `invalid interface list ...` 错误信息；接口名不是字符串时返回 `interface name at index N is not a string`；接口类不存在时返回 `interface not found: 类名`。以上错误均以 `nil + 错误信息` 的形式返回，不会导致进程崩溃。
 
 ```lua
 local ran = false
@@ -179,11 +268,11 @@ end
 
 ---
 
-## 9. 异步任务 API（Agent V2）
+## 10. 异步任务 API（Agent V2）
 
 LuaJavaNE 提供了一套基于 **Promise** 的异步任务系统，可在后台线程池执行 Java 方法，结果通过轮询取回。
 
-### 9.1 创建 Promise
+### 10.1 创建 Promise
 
 ```lua
 local id = java.promise()   -- 返回一个整数 ID
@@ -191,7 +280,7 @@ local id = java.promise()   -- 返回一个整数 ID
 
 每个 `id` 关联一个可等待的异步结果。
 
-### 9.2 提交静态方法任务
+### 10.2 提交静态方法任务
 
 ```lua
 java.runAsync(id, "类名", "方法名", 参数1, 参数2, ...)
@@ -203,7 +292,9 @@ local id = java.promise()
 java.runAsync(id, "java.lang.Integer", "parseInt", "123")
 ```
 
-### 9.3 提交实例方法任务
+参数可以是标量，也可以是 Java 对象/数组 userdata：对象会登记到参数对象池并以 id 传递，任务结束后自动释放；`table`/`function` 不支持。
+
+### 10.3 提交实例方法任务
 
 ```lua
 java.runAsyncObj(id, 对象, "方法名", 参数1, 参数2, ...)
@@ -216,7 +307,7 @@ local id = java.promise()
 java.runAsyncObj(id, s, "length")
 ```
 
-### 9.4 构造对象并异步返回
+### 10.4 构造对象并异步返回
 
 通过 `"new"` 方法名构造对象：
 ```lua
@@ -224,7 +315,7 @@ local id = java.promise()
 java.runAsync(id, "java.lang.String", "new", "Hello World")
 ```
 
-### 9.5 轮询结果
+### 10.5 轮询结果
 
 ```lua
 local done, result1, result2, ... = java.checkPromise(id)
@@ -241,7 +332,7 @@ until done
 print(val)   -- 打印 "123"
 ```
 
-### 9.6 获取异步构造的对象
+### 10.6 获取异步构造的对象
 
 如果异步任务返回一个 Java 对象（例如构造器返回），`checkPromise` 会返回一个 **对象 ID**（整数），你需要通过 `java.getObject(id)` 将其转换为 Lua 可用的 Java 对象 userdata。
 
@@ -255,7 +346,7 @@ local obj = java.getObject(oid)   -- obj 现在是一个 Java String 对象
 print(obj:length())               -- 输出 11
 ```
 
-### 9.7 错误处理
+### 10.7 错误处理
 
 如果异步任务抛出异常，`checkPromise` 会返回错误字符串（以 `"E:"` 开头，内容为 `类名.方法 -> 异常类型: 消息`，已包含根因）。
 
@@ -268,7 +359,14 @@ if err and string.sub(err, 1, 2) == "E:" then
 end
 ```
 
-### 9.8 回调消费结果（java.onComplete）
+同步调用（如 `对象:方法()`）抛出 Java 异常时，Lua 侧收到的是包含 `java.lang.异常类: message` 的错误字符串，可用 `pcall` 捕获：
+
+```lua
+local ok, err = pcall(function() return obj:riskyMethod() end)
+-- err 形如: 文件:行号: Java exception in riskyMethod: java.lang.IllegalStateException: detail
+```
+
+### 10.8 回调消费结果（java.onComplete）
 
 除轮询外，也可注册完成回调，任务完成时由后台线程自动调用，无需轮询：
 
@@ -288,9 +386,9 @@ end)
 - 若任务已完成再注册，会立即触发。
 - 回调在后台工作线程执行，应**快速返回**；耗时的重活请再次 `runAsync` 提交。
 
-### 9.9 释放锁等待（java.yield）
+### 10.9 释放锁等待（java.yield）
 
-主线程轮询等待异步结果或代理回调时，`java.yield(ms)` 会短暂释放 Lua 锁（默认 10ms）再重新获取，让后台工作线程有机会执行回调，避免"主线程持锁等待 → 工作线程无法执行 Lua"的死锁（详见第 8 节）。
+主线程轮询等待异步结果或代理回调时，`java.yield(ms)` 会短暂释放 Lua 锁（默认 10ms）再重新获取，让后台工作线程有机会执行回调，避免"主线程持锁等待 → 工作线程无法执行 Lua"的死锁。
 
 ```lua
 while not done do
@@ -298,9 +396,29 @@ while not done do
 end
 ```
 
+### 10.10 协程等待（java.await）
+
+在协程内挂起等待 Promise 完成，任务完成后由工作线程恢复协程：
+
+```lua
+local co = coroutine.create(function()
+    local id = java.promise()
+    java.runAsync(id, "java.lang.Thread", "sleep", 200)
+    java.await(id)
+    print("done")
+end)
+coroutine.resume(co)
+while coroutine.status(co) ~= "dead" do java.yield(5) end
+```
+
+- 任务已完成：立即返回，结果语义与 `checkPromise` 一致；
+- 任务失败：返回 `E:` 后的错误文本，不抛出异常；
+- 非协程环境等待未完成任务会报 `attempt to yield from outside a coroutine`；
+- 主线程必须用 `java.yield` 让出 Lua 锁，工作线程才能恢复协程。
+
 ---
 
-## 10. 跨 Lua 状态的全局存储（java.store / java.fetch）
+## 11. 跨 Lua 状态的全局存储（java.store / java.fetch）
 
 `java.store` 和 `java.fetch` 提供了跨多个 `LuaRuntime` 实例共享数据的机制（基于进程内全局哈希表）。
 
@@ -320,14 +438,17 @@ end
 
 -- 删除
 java.deleteStore("myKey")
+
+-- 清空整个进程级存储
+java.cleanup()
 ```
 
-支持的类型：`nil`, `number`, `string`, `boolean`。存储的值会在进程生命周期内保留（除非显式删除）。
+支持的类型：`nil`, `number`, `string`, `boolean`。存储的值会在进程生命周期内保留（除非显式删除，或调用 `java.cleanup()` 清空整个全局表）。
 `java.listall()` 返回当前进程存储的瞬态快照表，不支持的复杂类型（table/function/userdata 等）存入时会被降级为 `nil` 并在 `listall()` 中跳过。
 
 ---
 
-## 11. 类型映射（Lua ↔ Java）
+## 12. 类型映射（Lua ↔ Java）
 
 | Lua 类型      | Java 类型                     | 说明                               |
 |---------------|-------------------------------|------------------------------------|
@@ -336,7 +457,8 @@ java.deleteStore("myKey")
 | `number` (整数) | `int`, `long`（视范围）      | Lua 整数若超出 int 范围则用 long   |
 | `number` (浮点) | `double` / `float`           | 浮点数优先作为 double，可匹配 float |
 | `string`      | `java.lang.String`            | 自动转换                           |
-| `table` (用作参数) | 不支持直接传递，需用代理或数组 | 若需传递 Lua 表给 Java，请使用 `java.createProxy` |
+| `string`（单个码点）或整数 | `char` / `Character` | 超出 BMP 的码点取高代理项；空串为 `\0` |
+| `table` (用作参数) | `com.luajava.LuaTable`（惰性活引用） | 直接传递，Java 以 `LuaTable` 接收，读写实时生效（见第 8 节） |
 | `userdata` (Java 对象) | 对应 Java 对象            | 保持原引用                         |
 | `function`    | 不直接支持，可用代理封装       | 可通过 `java.createProxy` 包装为接口 |
 
@@ -344,7 +466,8 @@ java.deleteStore("myKey")
 - Java `void` → Lua `nil`
 - Java `String` → Lua `string`
 - Java 基本类型（int, double, boolean 等）→ 对应的 Lua 类型
-- Java 对象 → Lua userdata（可继续调用其方法）
+- Java `Map` / `List` / `Collection` → Lua 惰性容器 userdata（`__index`/`__newindex`/`__len`/`__pairs`，见第 8 节）
+- 其他 Java 对象 → Lua userdata（可继续调用其方法）
 
 **Java→Lua 传参**（`LuaRuntime.callFunction` / `callFunctionMultiple` 传给 Lua 函数的参数，与返回转换保持一致）：
 - Java `null` → Lua `nil`
@@ -353,27 +476,36 @@ java.deleteStore("myKey")
 - Java `byte` / `short` / `int` / `long` → Lua 整数；`float` / `double` → Lua 浮点数
 - Java 布尔 → Lua `boolean`
 - Java 数组 → Lua `Java.Array` userdata（0 基索引、`#` 长度、元素读写）
+- Java `Map` / `List` / `Collection` → Lua 惰性容器 userdata（见第 8 节）
 - 其他 Java 对象 → Lua Java 对象 userdata（可继续调用其方法）
+
+> **字符串编码**：双向均按标准 UTF-8 转换。emoji 等增补平面字符（4 字节 UTF-8）可正确往返；非法 UTF-8 字节或孤立 UTF-16 代理项会替换为 `U+FFFD`。Java `char` / `Character` 只能表示 BMP 码点。
 
 ---
 
-## 12. 注意事项
+## 13. 注意事项
 
-1. **线程安全**：异步任务在独立线程池执行，但 Lua 状态本身不是线程安全的。请勿在多个线程中同时操作同一个 `LuaRuntime` 实例（除非外部加锁）。
+1. **线程安全**：异步任务在独立线程池执行，但 Lua 状态本身不是线程安全的。请勿在多个线程中同时操作同一个 `LuaRuntime` 实例（除非外部加锁）；所有 `LuaRuntime` 共享一把递归 `lua_mutex`，长时间执行 Lua 会阻塞其他状态的调用与回调。
 
-2. **方法重载**：LuaJavaNE 会根据参数类型和数量匹配最合适的重载版本；常规签名查找失败时会自动回退到 Java 反射调用（支持任意返回类型，如 `java.math.BigInteger`/`BigDecimal` 的方法），仍无法匹配才抛出 Lua 错误。
+2. **方法重载**：LuaJavaNE 会根据参数类型和数量匹配最合适的重载版本。6 个参数以内优先走快速签名匹配；7 个及以上自动回退到 Java 反射（结果正确但性能略低）。泛型擦除、可变参数或高度动态的重载仍可能选不到预期版本，失败时报 `no matching method: ... (原因)`。
 
 3. **资源释放**：Java 对象由 JVM GC 管理，但 Lua userdata 会持有 JNI 全局引用，应避免大量临时对象造成内存压力。必要时可显式调用 `java.import("java.lang.System"):gc()` 建议 GC。
 
 4. **数组索引**：Java 数组在 Lua 中索引从 0 开始（与 Java 一致），`#arr` 返回数组长度。
 
-5. **异步超时**：目前没有提供超时机制，可在 Lua 侧用 `utils.timer` 自行实现。
+5. **异步超时**：Lua 侧没有取消/超时 API，底层默认超时 300 秒，可在 Lua 侧用 `utils.timer` 自行实现超时控制。
 
-6. **调试**：可使用 `java.toString(对象)` 获取 Java 对象的字符串表示（等同于 Java 的 `toString()`）。
+6. **异步参数与 await**：Java 对象参数经参数对象池传递并在任务结束后释放；`table`/`function` 不能作为异步参数。`java.await` 必须在协程内等待未完成任务，失败时返回 `E:` 后的错误文本（不抛出）。
+
+7. **Unicode**：字符串按标准 UTF-8 双向转换；非法字节或孤立代理项替换为 `U+FFFD`；Java `char` 只能表示 BMP 字符，无法承载 emoji 等增补平面码点。
+
+8. **全局存储**：`java.store` 是进程级全局表（跨 `LuaRuntime` 共享是设计特性），不会随单个状态关闭而清空；可用 `java.cleanup()` 整体清空。
+
+9. **调试**：可使用 `java.toString(对象)` 获取 Java 对象的字符串表示（等同于 Java 的 `toString()`）。
 
 ---
 
-## 13. 完整示例
+## 14. 完整示例
 
 ```lua
 local java = require("java")
@@ -413,10 +545,10 @@ print(java.fetch("counter"))     -- 100
 
 ---
 
-## 14. 更多资料
+## 15. 更多资料
 
 - 项目主页：https://github.com/npp-zep/LuaJavaNE
 - Java 侧 API 文档（LuaRuntime 等）见 `docs/` 目录或源码注释。
 
 ---
-*本文档对应 LuaJavaNE 版本 2.2.6.1。*
+*本文档对应 LuaJavaNE 版本 2.4.1。*

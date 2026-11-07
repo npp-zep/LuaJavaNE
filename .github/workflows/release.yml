@@ -29,17 +29,18 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Show toolchain
+        run: |
+          uname -sm
+          echo "JAVA_HOME=$JAVA_HOME"
+          cc --version | head -1
+          cmake --version | head -1
+
       - name: Build Release
-        run: |
-          make release
-      - name: Build Debian Package
-        if: runner.os == 'Linux'
-        run: |
-          make deb
-      - name: Build Termux Package (aarch64)
-        if: runner.os == 'Linux' && matrix.arch == 'aarch64'
-        run: |
-          make deb-termux
+        run: make release
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+
       - name: Create Release Archive
         run: |
           # 获取版本号
@@ -47,7 +48,7 @@ jobs:
           if [ -z "$VERSION" ]; then
             VERSION=${GITHUB_REF_NAME#v}
           fi
-          
+
           cd release
           tar czf ../luajavane-${VERSION}-${{ runner.os }}-${{ matrix.arch }}.tar.gz *
 
@@ -55,16 +56,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: luajavane-${{ runner.os }}-${{ matrix.arch }}
-          path: |
-            luajavane-*.tar.gz
-            *.deb
+          path: luajavane-*.tar.gz
 
   publish:
     needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -80,19 +79,18 @@ jobs:
 
       - name: Publish Release
         run: |
-          # 收集所有平台的 tar.gz 压缩包
           ASSETS=""
-          for f in artifacts/*/*.tar.gz artifacts/*/*.deb; do
+          for f in artifacts/*/*.tar.gz; do
             if [ -f "$f" ]; then
               ASSETS="$ASSETS $f"
             fi
           done
-          
+
           if [ -z "$ASSETS" ]; then
             echo "No assets found to upload!"
             exit 1
           fi
-          
+
           gh release create ${{ github.ref_name }} $ASSETS \
             --title "LuaJavaNE ${{ steps.get_version.outputs.VERSION }}" \
             --generate-notes

@@ -1,6 +1,7 @@
-MIT License
-
+LuaJavaNE
 Copyright (c) 2026 npp-zep
+
+MIT License
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,27 +23,24 @@ SOFTWARE.
 
 -------------------------------------------------------------------------------
 
-This project includes Lua 5.4.8 and JLine 3 , Sleef.
+Third-party components
 
-Lua 5.4.8
+### Lua 5.4.8
 Copyright (C) 1994-2023 Lua.org, PUC-Rio.
-Licensed under the MIT license.
+Licensed under the Lua License (MIT-style).
+Full license text: https://www.lua.org/license.html
 
-JLine 3
+### JLine 3
 Copyright (c) 2002-2022, JLine contributors.
 Licensed under the BSD-3-Clause license.
+Full license text: https://opensource.org/licenses/BSD-3-Clause
 
--------------------------------------------------------------------------------
-
-JUnit 5
-(only for test)
+### JUnit 5 (test-only; not distributed in release packages)
 Copyright (c) 2015-2023 JUnit contributors.
 Licensed under the Eclipse Public License 1.0 (EPL-1.0).
-See ./EPL_1.0.txt for full license text.
+Full license text: https://spdx.org/licenses/EPL-1.0.html
 
--------------------------------------------------------------------------------
-
-Sleef
+### Sleef (optional build-time dependency)
 Boost Software License - Version 1.0 - August 17th, 2003
 
 Permission is hereby granted, free of charge, to any person or organization

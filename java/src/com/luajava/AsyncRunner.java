@@ -2,6 +2,7 @@ package com.luajava;
 
 import com.luajava.exception.TypeConversionError;
 import java.lang.reflect.*;
+import java.nio.charset.StandardCharsets;
 
 public class AsyncRunner {
 
@@ -10,35 +11,78 @@ public class AsyncRunner {
 
     // 同步调用实例方法（通用 fallback）
     public static String invokeInstance(Object obj, String methodName, String[] args) {
+        return invokeInstance(obj, methodName, args, false);
+    }
+
+    public static String invokeInstance(Object obj, String methodName, String[] args, boolean expandArrays) {
         try {
             if (obj == null) return "E:null instance";
             Class<?> cls = obj.getClass();
+            Method best = null;
+            Object[] bestArgs = null;
+            int bestScore = Integer.MIN_VALUE;
             for (Method m : cls.getMethods()) {
                 if (!m.getName().equals(methodName)) continue;
                 Object[] converted = matchArgs(m.getParameterTypes(), args);
                 if (converted != null) {
-                    Object result = m.invoke(obj, converted);
-                    return serialize(result);
+                    int score = scoreMethodMatch(m.getParameterTypes(), converted);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        best = m;
+                        bestArgs = converted;
+                    }
                 }
             }
-            return "E:no matching method: " + methodName + detail();
-        } catch (Throwable e) {
-            return "E:" + methodName + " failed -> " + describeError(e);
+            if (best == null) return "E:no matching method: " + methodName + detail();
+            try {
+                return serialize(best.invoke(obj, bestArgs), expandArrays);
+            } catch (InvocationTargetException e) {
+                return "E:" + e.getCause();
+            } catch (Throwable e) {
+                return "E:" + methodName + " failed -> " + describeError(e);
+            }
+        } finally {
+            releaseObjectArgs(args);
         }
     }
 
     public static String runStatic(String className, String methodName, String[] args) {
+        return runStatic(className, methodName, args, false);
+    }
+
+    public static String runStatic(String className, String methodName, String[] args, boolean expandArrays) {
         try {
-            Class<?> cls = Class.forName(className);
-            if (methodName.equals("new")) return callConstructor(cls, args);
-            return callMethod(cls, null, methodName, args);
-        } catch (Throwable e) {
-            return "E:" + className + "." + methodName + " -> " + describeError(e);
+            try {
+                Class<?> cls = Class.forName(className);
+                if (methodName.equals("new")) return callConstructor(cls, args);
+                return callMethod(cls, null, methodName, args, expandArrays);
+            } catch (Throwable e) {
+                return "E:" + className + "." + methodName + " -> " + describeError(e);
+            }
+        } finally {
+            releaseObjectArgs(args);
+        }
+    }
+
+    // 释放 C 侧为 Java 对象参数登记的池引用（hint='O' 的条目）
+    private static void releaseObjectArgs(String[] pairs) {
+        if (pairs == null) return;
+        for (int i = 1; i < pairs.length; i += 2) {
+            if ("O".equals(pairs[i])) {
+                try {
+                    LuaAgent.releaseArgumentObject(Integer.parseInt(pairs[i - 1]));
+                } catch (NumberFormatException ignored) {
+                }
+            }
         }
     }
 
     public static String runInstance(Object instance, String methodName, String[] args) {
-        return invokeInstance(instance, methodName, args);
+        return invokeInstance(instance, methodName, args, false);
+    }
+
+    public static String runInstance(Object instance, String methodName, String[] args, boolean expandArrays) {
+        return invokeInstance(instance, methodName, args, expandArrays);
     }
 
     private static String callConstructor(Class<?> cls, String[] pairs) throws Exception {
@@ -66,7 +110,7 @@ public class AsyncRunner {
         }
     }
 
-    private static String callMethod(Class<?> cls, Object obj, String name, String[] pairs) throws Exception {
+    private static String callMethod(Class<?> cls, Object obj, String name, String[] pairs, boolean expandArrays) throws Exception {
         Method best = null;
         Object[] bestArgs = null;
         int bestScore = Integer.MIN_VALUE;
@@ -84,7 +128,7 @@ public class AsyncRunner {
         }
         if (best == null) return "E:no matching method: " + name + detail();
         try {
-            return serialize(best.invoke(obj, bestArgs));
+            return serialize(best.invoke(obj, bestArgs), expandArrays);
         } catch (InvocationTargetException e) {
             return "E:" + e.getCause();
         }
@@ -98,7 +142,11 @@ public class AsyncRunner {
             else if (pts[i] == int.class && args[i] instanceof Integer) score += 8;
             else if (pts[i] == long.class && args[i] instanceof Long) score += 8;
             else if (pts[i] == double.class && args[i] instanceof Double) score += 8;
+            else if (pts[i] == float.class && args[i] instanceof Float) score += 8;
             else if (pts[i] == boolean.class && args[i] instanceof Boolean) score += 8;
+            else if (pts[i] == short.class && args[i] instanceof Short) score += 8;
+            else if (pts[i] == byte.class && args[i] instanceof Byte) score += 8;
+            else if (pts[i] == char.class && args[i] instanceof Character) score += 8;
             else if (pts[i] == String.class && args[i] instanceof String) score += 5;
             else score += 1;
         }
@@ -122,19 +170,117 @@ public class AsyncRunner {
     }
 
     private static Object convert(String v, String hint, Class<?> t) {
-        if (t == String.class || t == Object.class) return v;
+        char h = (hint == null || hint.isEmpty()) ? 'S' : hint.charAt(0);
+        // Java 对象参数：C 侧只传对象池 id，这里非破坏性取回，任务结束后统一释放
+        if (h == 'O') {
+            int id;
+            try {
+                id = Integer.parseInt(v);
+            } catch (NumberFormatException e) {
+                throw new TypeConversionError("invalid object id: " + v, e);
+            }
+            Object o = LuaAgent.peekArgumentObject(id);
+            if (o == null) throw new TypeConversionError("object argument not found: " + id);
+            if (t.isPrimitive()) throw new TypeConversionError("cannot pass object to primitive " + t.getName());
+            if (t != Object.class && !t.isAssignableFrom(o.getClass())) {
+                throw new TypeConversionError("cannot pass " + o.getClass().getName() + " to " + t.getName());
+            }
+            return o;
+        }
+        // Object 参数按 Lua 原始类型还原，避免数字/布尔被当作字符串传递
+        if (t == Object.class) return hintedValue(v, h);
+        if (t == String.class) return v;
         try {
-            if (t == int.class || t == Integer.class) return Integer.parseInt(v);
-            if (t == long.class || t == Long.class) return Long.parseLong(v);
+            if (t == int.class || t == Integer.class) {
+                return h == 'D' ? integralFromDouble(v, Integer.class) : Integer.parseInt(v);
+            }
+            if (t == long.class || t == Long.class) {
+                return h == 'D' ? integralFromDouble(v, Long.class) : Long.parseLong(v);
+            }
+            if (t == short.class || t == Short.class) {
+                return h == 'D' ? integralFromDouble(v, Short.class)
+                                : integralInRange(v, Short.MIN_VALUE, Short.MAX_VALUE, Short.class);
+            }
+            if (t == byte.class || t == Byte.class) {
+                return h == 'D' ? integralFromDouble(v, Byte.class)
+                                : integralInRange(v, Byte.MIN_VALUE, Byte.MAX_VALUE, Byte.class);
+            }
+            if (t == char.class || t == Character.class) {
+                if (v.length() != 1) {
+                    throw new NumberFormatException("expected a single character: '" + v + "'");
+                }
+                return v.charAt(0);
+            }
             if (t == double.class || t == Double.class) return Double.parseDouble(v);
             if (t == float.class || t == Float.class) return Float.parseFloat(v);
             if (t == boolean.class || t == Boolean.class) return Boolean.parseBoolean(v);
             if (t == byte[].class) return v.getBytes();
-        } catch (NumberFormatException nfe) {
+            if (t == java.math.BigInteger.class) return new java.math.BigInteger(v.trim());
+            if (t == java.math.BigDecimal.class) return new java.math.BigDecimal(v.trim());
+            if (t.isEnum()) return enumValue(t, v);
+        } catch (IllegalArgumentException nfe) {
             throw new TypeConversionError(
                     "cannot convert '" + v + "' to " + t.getSimpleName(), nfe);
         }
         return null;
+    }
+
+    // 解析整数并校验目标类型范围（short/byte 等）
+    private static Number integralInRange(String v, long min, long max, Class<?> t) {
+        long value = Long.parseLong(v);
+        if (value < min || value > max) {
+            throw new NumberFormatException("out of " + t.getSimpleName() + " range: " + v);
+        }
+        if (t == Short.class) return (short) value;
+        return (byte) value;
+    }
+
+    // 枚举参数：按常量名匹配（区分大小写）
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Object enumValue(Class<?> t, String v) {
+        return Enum.valueOf((Class<? extends Enum>) t, v);
+    }
+
+    // 依据 Lua 侧类型提示（I/D/Z/S）还原 Object 参数；无法解析时退回原始字符串
+    private static Object hintedValue(String v, char h) {
+        try {
+            switch (h) {
+                case 'I': return Long.parseLong(v);
+                case 'D': return Double.parseDouble(v);
+                case 'Z': return Boolean.parseBoolean(v);
+                default: return v;
+            }
+        } catch (NumberFormatException e) {
+            return v;
+        }
+    }
+
+    // Lua 浮点值传给整数参数时，仅接受无小数部分且在范围内的值
+    private static Number integralFromDouble(String v, Class<?> t) {
+        double d = Double.parseDouble(v);
+        if (d != Math.rint(d)) throw new NumberFormatException("not an integer: " + v);
+        if (t == Integer.class) {
+            if (d < Integer.MIN_VALUE || d > Integer.MAX_VALUE) {
+                throw new NumberFormatException("out of int range: " + v);
+            }
+            return (int) d;
+        }
+        if (t == Short.class) {
+            if (d < Short.MIN_VALUE || d > Short.MAX_VALUE) {
+                throw new NumberFormatException("out of short range: " + v);
+            }
+            return (short) d;
+        }
+        if (t == Byte.class) {
+            if (d < Byte.MIN_VALUE || d > Byte.MAX_VALUE) {
+                throw new NumberFormatException("out of byte range: " + v);
+            }
+            return (byte) d;
+        }
+        if (d < Long.MIN_VALUE || d > Long.MAX_VALUE) {
+            throw new NumberFormatException("out of long range: " + v);
+        }
+        return (long) d;
     }
 
     // 生成可读的错误描述（类型 + 消息 + 根因链），供 E: 字符串携带诊断信息
@@ -165,6 +311,29 @@ public class AsyncRunner {
     }
 
     private static String serialize(Object obj) {
+        return serialize(obj, false);
+    }
+
+    // expandArrays 为 true 时把 Object[] 展开成 M: 多值协议，否则按单个对象注册到对象池。
+    private static String serialize(Object obj, boolean expandArrays) {
+        if (expandArrays && obj instanceof Object[]) {
+            Object[] arr = (Object[]) obj;
+            StringBuilder sb = new StringBuilder("M:").append(arr.length).append('|');
+            for (Object o : arr) {
+                String item = serializeScalar(o);
+                // item 形如 "S:xxx"/"I:42"；payload 可能含 ':' 或 '|'，故补长度前缀。
+                // 长度按 UTF-8 字节数计算，与 JNI 传给 Lua 的编码一致。
+                String payload = item.substring(2);
+                sb.append(item.charAt(0)).append(':')
+                  .append(payload.getBytes(StandardCharsets.UTF_8).length).append(':')
+                  .append(payload);
+            }
+            return sb.toString();
+        }
+        return serializeScalar(obj);
+    }
+
+    private static String serializeScalar(Object obj) {
         if (obj == null) return "X:nil";
         if (obj instanceof String) return "S:" + obj;
         if (obj instanceof Integer || obj instanceof Long) return "I:" + obj;

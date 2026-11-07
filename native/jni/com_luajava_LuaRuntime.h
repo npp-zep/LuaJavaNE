@@ -37,22 +37,22 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1doString
  * Signature: (J)V
  */
 JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1close
-  (JNIEnv *, jobject, jlong);
+  (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_luajava_LuaRuntime
  * Method:    _setGlobal
- * Signature: (JLjava/lang/String;Ljava/lang/String;)V
+ * Signature: (JLjava/lang/String;Ljava/lang/Object;)V
  */
 JNIEXPORT void JNICALL Java_com_luajava_LuaRuntime__1setGlobal
-  (JNIEnv *, jobject, jlong, jstring, jstring);
+  (JNIEnv *, jobject, jlong, jstring, jobject);
 
 /*
  * Class:     com_luajava_LuaRuntime
- * Method:    _getGlobal
- * Signature: (JLjava/lang/String;)Ljava/lang/String;
+ * Method:    _getGlobalObject
+ * Signature: (JLjava/lang/String;)Ljava/lang/Object;
  */
-JNIEXPORT jstring JNICALL Java_com_luajava_LuaRuntime__1getGlobal
+JNIEXPORT jobject JNICALL Java_com_luajava_LuaRuntime__1getGlobalObject
   (JNIEnv *, jobject, jlong, jstring);
 
 /*

@@ -1,20 +1,85 @@
-## [Unreleased]
+# Changelog
 
-## [2.2.7.1] - 2026-09-05
+All notable changes to LuaJavaNE will be documented in this file.
+
+## [2.4.1] - 2026-11-07
+
+### Added
+- **`java.cleanup()`**: a Lua-facing entry point for the existing `java_cleanup` implementation, clearing the whole process-global `java.store` table.
+- **Java object arguments in async tasks**: `runAsync` / `runAsyncObj` now accept Java object/array userdata. The C side registers them in a dedicated argument-object pool and passes an `O` hint + id; `AsyncRunner` resolves the id without removing it (overload matching may inspect it multiple times) and releases it in `finally` after the task.
+- **`java.await` now works with `runAsync`**: completion resumes the waiting coroutine on the worker thread under `lua_mutex`, with a liveness check so a closed/removed state is not resumed.
+
+### Changed
+- **Method calls with 7+ arguments use the reflective path**: signature lookup is limited to 6 arguments to avoid exponential combination search; results are unchanged, only the fast path is skipped.
+
 ### Fixed
-- **Termux deb 架构名错误导致依赖不可装**：在 Debian/Ubuntu（如 CI 的 `ubuntu-24.04-arm`）上交叉打 Termux 包时，`dpkg --print-architecture` 返回 `arm64`，而 Termux 源里只有 `aarch64` 包，apt 按 `:arm64` 限定符匹配全部失败。`make deb-termux` 现在把架构名映射为 Termux 约定（`arm64→aarch64`、`armhf→arm`、`i386→i686`、`amd64→x86_64`），产出 `luajavane_<version>_aarch64-termux.deb`。
+- **JVM crash for methods with 7+ arguments**: `try_find_method` concatenated up to four candidate signatures per argument into a 128-byte `sig` buffer; seven `int` arguments (and seven `String` arguments) already overflowed the stack (ASan: `stack-buffer-overflow` at `try_method_combinations`). The buffer is now 512 bytes, every append is capacity-checked, and 7+ argument calls fall back to reflection.
+- **Unicode corruption in both directions**: Java `char`/`Character` returns were truncated to one byte, Java `String` returns used JNI modified UTF-8 (emoji became 6-byte CESU-8), and Lua UTF-8 strings passed to Java were decoded as modified UTF-8 (emoji became `ð`). All conversions now go through UTF-16 (`GetStringChars`/`NewString`), preserving 4-byte UTF-8 and embedded NULs; invalid bytes and lone surrogates become `U+FFFD`.
+- **Java exceptions lost their type and message**: synchronous method calls now report `java.lang.异常类: message`; reflective failures return a dedicated `-2` code so the captured throwable is surfaced instead of a bare "method not found".
+
+## [2.4.0] - 2026-11-06
+### Added
+- **Python-style multi-line REPL editing**: the JLine REPL now keeps the whole logical block in one editable buffer. Arrow keys move between physical lines first and only switch history at the first/last line (`up-line-or-history`/`down-line-or-history`), a block is submitted by a blank line while a closed single-line statement submits immediately, an unterminated string/bracket keeps the buffer open, multi-line entries stay one history item, and continuation lines use a `>> ` prompt with Lua-keyword auto-indentation (`LuaCompletenessChecker`). Ctrl-C aborts the pending block.
+- **`InputCompletenessChecker` SPI**: pluggable `check(buffer)` / `indentationFor(buffer)` used by `LineEditor` to decide continuation vs submission; the Lua implementation lexes short/long strings, long brackets, comments, bracket nesting and block keywords (`if`/`for`/`while`/`do`/`function`/`repeat` → `end`/`until`).
+- **OpenMP batch parallelism**: `clac` batch functions now run `omp parallel for` for arrays of 4096+ elements, tunable with `OMP_NUM_THREADS`. On 8 cores, 2M-element `batch_sin` drops from ~0.24 s to ~0.12 s. Builds without OpenMP run serially.
+- **Sleef AVX2 vector kernels for batch math**: batch functions now use Sleef `d4` AVX2 vector routines (28 symbols) instead of scalar math; `batch_sqrt`/`batch_abs` use the hardware `sqrtpd`/`vandpd` instructions directly. Array tails and hosts without AVX2 automatically fall back to scalar/libm.
+- **Opt-in multi-value async results**: `java.promise(true)` expands an `Object[]` task result into the `M:` protocol, so `checkPromise` and `onComplete` receive one Lua value per element. Elements are length-prefixed (safe for `:`/`|`) and non-primitive elements remain retrievable via `java.getObject`. Without the flag, arrays keep returning `O:id` as before.
+
+### Changed
+- **Sleef detection requires headers *and* a linkable library**: header-only detection could enable Sleef without a `libsleef` to link against (undefined symbols at load time), and the old scalar `Sleef_*_f64` names produced implicit declarations. CMake now pairs the header with the library (vendored or system) and otherwise compiles without it; `-DLUAJAVA_ENABLE_SLEEF=OFF` opts out explicitly.
+- Batch math results are unchanged numerically (verified over array sizes 3–8191 for every SIMD-vectorized batch function, relative error ≤ 1e-12).
+
+### Removed
+- **Unused legacy JNI entry points** (−248 lines): `LuaRuntime.registerJavaMethod`, `LuaPromise.complete`, `LuaPromise.resumeExceptionally`, `LuaRuntime._newAgentState`, plus their only helper `JavaMethodBinding`/`java_method_callback`. None had Java-side declarations or callers.
+
+### Fixed
+- **Async result pool eviction was silent**: when more than 10,000 results were left unconsumed, the oldest pins were dropped and `getObject` returned `nil`, indistinguishable from "never existed" or "already taken". Evictions now log a warning (first and every 1000), are tracked in a bounded id set, and `java.getObject` raises `async result N was discarded: ...` for them; `LuaAgent.wasEvicted(id)` and `getRegistryStats()` expose the same information.
+- **Async arguments missed several Java types**: `AsyncRunner.convert` only handled `String`/`boolean`/`int`/`long`/`float`/`double`/`byte[]`, so methods taking `short`, `byte`, `char`, `BigInteger`, `BigDecimal` or an enum never matched. These now convert (with range checks for `short`/`byte`, single-character checks for `char`, constant-name lookup for enums), and overload scoring ranks the matching primitive. Numeric-looking Lua strings are also no longer re-rendered as `%.17g`, so large integer strings keep full precision.
+- **A dedicated thread was spawned per timed async task**: every `submitTaskFuture` with a timeout started its own `Thread` that slept until the timeout instant, so N pending tasks meant N sleeping threads. All timeout checks now share one daemon `ScheduledThreadPoolExecutor`; a task cancels its pending check when it finishes (`setRemoveOnCancelPolicy(true)`), and the scheduler is torn down by `shutdown()`/`shutdownNow()`.
+- **Resource cleanup relied on the deprecated `finalize()`**: `LuaRuntime`, `LuaFunctionObj` and `LuaTable` now register `java.lang.ref.Cleaner` actions that hold only the state pointer and registry ref, so explicit `close()`/`destroy()` and GC cleanup share one idempotent path. `finalize` overrides were removed.
+- **Proxies failed on Object and default interface methods**: a handler table that did not define `toString`/`hashCode`/`equals` made the proxy unusable in collections, logging or `Objects.equals` (`NoSuchMethodError`); interface `default` methods also failed. Missing `default` methods now run the Java implementation via `InvocationHandler.invokeDefault`, and missing `toString`/`hashCode`/`equals` fall back to proxy identity semantics. Lua-defined functions still take precedence.
+- **Proxy errors read freed JNI memory**: the method name from `GetStringUTFChars` was released before being used by `lua_getfield` and the "not implemented" error message, producing garbled method names. The name is copied into a local buffer before release.
+- **Lua integers beyond 32 bits were truncated**: `lua_to_java_object` always boxed Lua integers as `Integer` via a `(jint)` cast, so values like `9007199254740993` came back as `1`. Values that fit in 32 bits still return `Integer`; larger ones now return `Long` with the full 64-bit value.
+- **`setGlobal` only accepted strings**: the native setter always pushed a raw `jstring`, so numbers, booleans, Java objects and arrays could only be injected via `doString`. It now takes `Object` and pushes through the normal Java→Lua conversion (numbers/booleans stay native Lua values, objects/arrays become Java userdata). Added `getGlobalObject` for typed reads; `getGlobal` keeps returning the stringified value.
+- **Async type hints were ignored**: the `I/D/Z/S` hints built on the Lua side never reached conversion, so booleans were sent as empty strings (`lua_tostring` on a boolean is NULL) and numbers went through `lua_tostring`'s 14-digit formatting. Arguments are now rendered as `%lld` / `%.17g` / `true|false`, and Java uses the hint: `Object` parameters receive `Long`/`Double`/`Boolean` instead of strings, and a Lua float can bind to an integral parameter when it has no fractional part.
+- **Instance methods ignored overload scoring**: `AsyncRunner.invokeInstance` used the first convertible overload, while static calls went through `scoreMethodMatch`; instance calls now score all candidates too, so both paths pick the same overload for a given argument list.
+- **Java objects returned from Lua were lost as `null`**: `lua_to_java_object` had no `LUA_TUSERDATA` branch, so `Java.Object`, `Java.Class`, `Java.Array` and `Java.Table` values passed back to Java (via `LuaRuntime.callFunction`, `LuaTable.get`, table writes, proxy returns) all became `null`. All four metatables are now mapped to the underlying object with a fresh local reference.
+- **Double release of a proxy handler's Lua registry reference**: `LuaInvocationHandler.destroy()` released `statePtr`/`tableRef` while `Cleaner` retained the same values and released them again at GC time (double `luaL_unref` + `lua_state_release_ref`, risking premature `lua_close`). Both paths now share one `Cleaner.Cleanable`, which executes at most once.
+- **Unbounded growth of the async result pin pool**: every non-primitive async result was strongly referenced in `LuaAgent.pinnedObjects` until fetched, so ignored results leaked JVM object graphs forever; `unregisterObject` also failed to drop the strong reference. The pool is now FIFO-capped at 10,000 entries, and unregister/get release pins correctly.
+- **`java.createProxy` no longer crashes the JVM on malformed input**: the interface-name list is validated before any JNI work — an empty list (including the common mistake of passing the `handler` table first) returns `nil` + `invalid interface list ... expected java.createProxy({interface...}, handler)` instead of dereferencing NULL in `GetObjectClass` (SIGSEGV); non-string interface names report `interface name at index N is not a string`; every JNI step (class lookup, interface-array allocation/fill, `LuaInvocationHandler`/proxy creation, class-loader resolution) is now guarded with NULL/exception checks and fails with a clear Lua error after releasing local refs and the registry reference
+- **`java.newArray` rejects negative sizes**: a negative length made `Array.newInstance` throw `NegativeArraySizeException` and return NULL, later crashing on `NewGlobalRef(NULL)`; it now returns `nil` + `array size must be >= 0`
+
+## [2.3.1] - 2026-09-30
+### Added
+- **List append from Lua**: `l[#l + 1] = v` on a Java `List` now appends via `List.add` (indices within `1..#l` still overwrite via `set`, and `table.insert` works as usual)
+- **Java objects callable from Lua (`__call`)**: calling an object `obj(args...)` dispatches to its instance method `call(args...)`, e.g. `Function`-style proxy handlers; a missing `call` method raises a clear `method not found: call` error
+- **Lua functions inside Java containers stay callable**: storing a Lua function into a Java `Map`/`List` (or putting one back via `LuaTable.put`) now reads out as the original, directly callable Lua function instead of an opaque userdata (`push_luafunc_to_lua` restores the `LuaFunctionObj` registry reference)
+- **`testpkg.TestBridge` ships in the main jar**: `TestBridge.java` moved from `test/` to `java/src/testpkg/` and the Makefile compiles all of `java/src`, so default `make` builds it into `out/` and packs it into `luajava.jar` — `examples/table_bridge.lua` runs out of the box (no `make test` needed) and release packages carry it too
+
+### Fixed
+- **List out-of-bounds write now errors clearly**: writing beyond `size + 1` raises `list index out of bounds: N (size M)` instead of triggering an unchecked JNI exception; reads past the end still return `nil` (kept for `#` / `ipairs` termination)
+- **`examples/table_bridge.lua` "class not found: testpkg.TestBridge"**: `luaj.sh` previously missed the `out/` directory on the classpath (test classes were only built by `make test`)
+
+## [2.3.0] - 2026-09-30
+### Added
+- **Bidirectional table interop between Lua and Java** via lazy (live) proxies:
+  - **Lua table → Java**: Java receives Lua tables as a live `LuaTable` reference (`get` / `put` / `size` / `keys`), backed by a `luaL_ref` registry reference so reads and writes go straight to the original table without copying. Changes made from Java are immediately visible in Lua, and vice versa.
+  - **Java Map/List → Lua**: `Map` and `List` returned from Java (or passed as `@LuaFunction` module return values) are wrapped as lazy `JavaTable` userdata with `__index` / `__newindex` / `__len` / `__pairs` metamethods — Lua can read fields, take `#` length, `pairs` / `ipairs` iterate, and write back in place.
+  - **Type-conversion consistency**: tables are now handled at every conversion point — function/`@LuaFunction` arguments and return values, `LuaRuntime.callFunction*`, and overload scoring (`lua_score_with_class` prioritizes `LuaTable` for tables, and `Map`/`Collection` interfaces for container args).
+- **JUnit tests**: `TableBridgeTest` (11 cases) covering both directions — Java reading/traversing/mutating Lua tables live-referenced, and Lua reading/`#`/iterating/writing Java `Map`/`List` lazily. Registered in `make test`.
+
+### Fixed
+- **JVM SIGSEGV when iterating Java `Map`/`List` from Lua**: `lua_pushcclosure(L, -3, 2)` passed a stack *index* as the C-function pointer, so `pairs`/`ipairs` crashed during iteration. Now pushes the actual closure function.
+- **`pairs` over Java `Map` returned stale keys on repeat**: the generic-for `control` value (a string key) was reused as iteration state on the 2nd+ pass; iteration now uses the upvalue ordinal cursor instead of depending on `control`.
+- **`#` / `ipairs` on a Java `List` raised on out-of-bounds access**: iteration termination relies on `t[size+1]` hitting the end; the list indexer now returns `nil` for OOB instead of throwing, so exact ranges and `ipairs` terminate cleanly.
+- **`@LuaFunction`/`@LuaModule` methods returning `Map`/`List` produced opaque userdata**: the callback return path now routes non-primitive results through `java_table_dispatch`, wrapping containers as `JavaTable` (previously only `new_java_object_ud`), consistent with argument conversion.
 
 ## [2.2.7] - 2026-09-05
 ### Added
 - **`java.listall()` to enumerate the cross-state store**: iterates the FNV-1a hash table and returns a `key -> value` Lua table snapshot of all stored entries, e.g. `for k, v in pairs(java.listall()) do ... end`. Entries whose value was degraded to `nil` (unsupported complex types) are skipped. Registered between `fetch` and `deleteStore`; documented in README and `docs/Java4Lua.md`.
 - **Module-aware REPL autocompletion**: the JLine completer now covers the full Lua 5.4 standard library (base globals plus `string`, `table`, `math`, `io`, `os`, `coroutine`, `utf8`, `debug`, `package`) and all LuaJavaNE extension libraries (`java`, `clac`, `utils`, `gc`). Typing a dotted prefix like `string.s` or `clac.batch_` only suggests functions of that module; bare words complete keywords, base functions and module names.
-- **`make deb` to build a Debian package**: uses `dpkg-deb` (no debhelper needed) to produce `luajavane_<version>_<arch>.deb`, installing the `luaj` launcher to `/usr/bin/luaj` and the runtime (luajava.so, luajava.jar, jline.jar, scripts, docs, examples) under `/usr/share/luajavane/`. Installable via `sudo apt install ./luajavane_*.deb` or `sudo dpkg -i luajavane_*.deb`. Requires a JRE 17+; the `Depends` alternates cover both Debian/Ubuntu (`default-jre-headless (>= 17) | openjdk-17-jre-headless | openjdk-21-jre-headless`) and Termux (`openjdk-17 | openjdk-21 | openjdk-25`), which has no `*-jre-headless` split.
-- **`make deb-termux` for Termux packages**: Termux's dpkg extracts archives against the Android root, so a Debian-style `./usr/...` layout fails with *Read-only file system* (its own packages use `./data/data/com.termux/files/usr/...`). The deb recipe now takes the archive root from `DEB_ARCHIVE_PREFIX` (default `usr`); `make deb-termux` sets it to the full Termux prefix, and the `/bin/luaj` wrapper points at the matching `luaj.sh`.
-- **`make deb` auto-detects Termux**: instead of relying solely on the `PREFIX` env var (which may not be exported into `make`), the recipe now also probes the filesystem for `/data/data/com.termux/files/usr`; when either check hits, the Termux archive layout is used automatically and `make deb` prints the chosen `Archive prefix` so the result is visible.
 
 ### Fixed
-- **Termux deb 架构名错误导致依赖不可装**：在 Debian/Ubuntu（如 CI 的 `ubuntu-24.04-arm`）上交叉打 Termux 包时，`dpkg --print-architecture` 返回 `arm64`，而 Termux 源里只有 `aarch64` 包，apt 按 `:arm64` 限定符匹配全部失败。`make deb-termux` 现在把架构名映射为 Termux 约定（`arm64→aarch64`、`armhf→arm`、`i386→i686`、`amd64→x86_64`），产出 `luajavane_<version>_aarch64-termux.deb`。
-- **`make deb` failed on Termux (`control directory has bad permissions 700`)**: Termux defaults to `umask 077`, so the staged `DEBIAN` control directory was created with mode 700, which `dpkg-deb` rejects. The deb target now explicitly normalizes the whole staging tree (`chmod -R u=rwX,go=rX`) and sets `DEBIAN/control` to 0644, independent of the environment umask.
 - **REPL autocompletion no longer appends a trailing space**: JLine itself appends a space after a completed word whenever the `Candidate` is marked `complete` — even with a `null` suffix. The completer now creates candidates with `complete=false`, so accepting a completion yields `print` / `java.` with no auto-space; whether to add a space is left to the user.
 - **REPL continuation prompt (JLine) misjudged indentation when open/close keywords share one line**: `countNesting` only matched lines that were *entirely* a keyword, so a self-closing line such as `if x then print(1) end` was counted as +1 and the REPL wrongly waited for more input in `>>` mode. It now scans tokens and balances same-line pairs — `if..then..end`, `while..do..end`, `for..in..do..end`, `function..end`, standalone `do..end` and `repeat..until` all net to 0, `else`/`elseif` no longer change depth, and keywords inside string literals or `--` comments are ignored.
 
@@ -57,7 +122,6 @@
 - Method-not-found for methods returning concrete object types (e.g. `java.math` core methods)
 - Deadlock-prone `Thread.join()` pattern documented in the proxy example (replaced with `java.yield` wait loop)
 
-
 ## [2.2.4] - 2026-07-17
 ### Added
 - **Java arrays as Lua userdata**: automatic array detection and metadata caching when creating Java object wrappers
@@ -80,7 +144,6 @@
   - Fixed JNI `AttachCurrentThread` type warning
   - Updated workflow for multi-platform release artifacts
 
-
 ## [2.2.3] - 2026-07-09
 ### Added
 - **Multi-platform Release**: Linux x86_64, Linux ARM64, macOS ARM64 pre-built packages
@@ -100,30 +163,6 @@
 - External Lua C extensions (e.g. `lfs.so`) now load correctly via `LD_PRELOAD`
 - Release package now includes `lib/jline.jar`
 - `copyright`/`credits`/`license` no longer show duplicate help text
-- Compilation warning in `lualibjava.c` (array index out of bounds)
-
-
-
-## [2.2.1] - 2026-06-19
-### Added
-- **Multi-platform Release**: Linux x86_64, Linux ARM64, macOS ARM64 pre-built packages
-- **version.properties**: single source of truth for project version/metadata
-- **Examples**: `examples/hello.lua`, `examples/async.lua`, `examples/clac.lua`
-- **make release**: one-step packaging into `release/` directory
-- **helpRepl()**: separate REPL-specific help message
-- Cross-platform LuaRocks support via `LD_PRELOAD` + `LUA_PATH`/`LUA_CPATH` detection
-
-### Changed
-- `LuaJMain.java` reads version/copyright/license from system properties
-- `luaj.sh` auto-detects Lua module paths on Linux/macOS/Termux
-- CI/CD: matrix build for multi-platform releases, fixed test workflow
-- `_VERSION` now shows `LuaJavaNE 2.2.1 (Lua x.x.x, PUC-Rio)`
-
-### Fixed
-- External Lua C extensions (e.g. `lfs.so`) now load correctly via `LD_PRELOAD`
-- Release package now includes `lib/jline.jar`
-- `copyright`/`credits`/`license` no longer show duplicate help text
-
 
 ## [2.2.1] - 2026-06-18
 🎉 This is the 100th commit of the LuaJavaNE project.
@@ -137,11 +176,6 @@
 ### Fixed
 - Compilation warning in `lualibjava.c` (array index out of bounds)
 - `LD_PRELOAD` pollution in user environment (no longer set by project)
-
-
-# Changelog
-
-All notable changes to LuaJavaNE will be documented in this file.
 
 ## [2.2.0] - 2026-06-17
 ### Added

@@ -83,21 +83,28 @@ Object[] results = L.callFunctionMultiple("swap", "hello", "world");
 
 ## 4. 操作 Lua 全局变量
 
-### 4.1 设置全局变量（仅支持字符串值）
+### 4.1 设置全局变量（任意 Java 值）
 
 ```java
-L.setGlobal("name", "LuaJava");
-// 对应 Lua: name = "LuaJava"
+L.setGlobal("name", "LuaJava");   // Lua: name = "LuaJava"
+L.setGlobal("count", 42);         // Lua: count = 42（整数）
+L.setGlobal("ratio", 0.5);        // Lua: ratio = 0.5（浮点）
+L.setGlobal("enabled", true);     // Lua: enabled = true
+L.setGlobal("buf", new StringBuilder("hi"));
+L.setGlobal("arr", new int[] {1, 2, 3});  // Java.Array，0 基索引
+L.setGlobal("nothing", null);     // Lua: nothing = nil
 ```
 
-> **注意**：`setGlobal` 目前仅支持字符串。若需设置其他类型，请通过执行 `doString` 完成，或使用注解注册的 Java 方法。
+字符串、数字、布尔按 Lua 原生类型压栈；其他对象（含数组、Map/List）按 Lua 侧 Java userdata 规则包装。
 
-### 4.2 读取全局变量（返回字符串）
+### 4.2 读取全局变量
 
 ```java
-String version = L.getGlobal("_VERSION");
-System.out.println(version); // "Lua 5.4.8"
+String version = L.getGlobal("_VERSION");   // "Lua 5.4.8"
+Object count = L.getGlobalObject("count");  // Integer 42
 ```
+
+`getGlobal` 保留原行为，把值转成字符串；需要原始类型（数字、布尔、Java 对象、LuaTable/LuaFunctionObj）时使用 `getGlobalObject`。Lua 的 `nil` 在两种方法下都返回 `null`。Lua 整数在 32 位范围内返回 `Integer`，超出范围返回 `Long`（完整 64 位值）。
 
 ---
 
@@ -168,7 +175,7 @@ doubler.destroy();
 `LuaFunctionObj` 通过引用计数持有所属的 `lua_State`：即使先调用 `LuaRuntime.close()`，状态也会等到最后一个 `LuaFunctionObj`/`LuaInvocationHandler` 释放后才真正关闭，因此不会出现"状态已释放仍被引用"导致的崩溃。
 
 - 建议显式调用 `destroy()` 释放本机注册表引用（幂等，可重复调用）。
-- 未调用时，对象被 GC 回收会经 `finalize()` 兜底释放，但不推荐依赖 GC 时机。
+- 未调用时，对象被 GC 回收会经 `java.lang.ref.Cleaner` 兜底释放，但不推荐依赖 GC 时机。
 
 ---
 
@@ -201,6 +208,8 @@ doubler.destroy();
 | `userdata`  | 保持原 Java 对象引用（如果是通过 Java 传入的） |
 
 当 Lua 函数返回一个 Java 对象时（如通过 Java 方法返回的对象），该对象会被包装为 `userdata`，并在 Java 侧以原类型返回。
+
+> **字符串编码**：Java `String` → Lua 使用标准 UTF-8（emoji 等增补平面字符为 4 字节）；Lua 字符串 → Java 同样按标准 UTF-8 解码。非法 UTF-8 序列或孤立 UTF-16 代理项会替换为 `U+FFFD`。
 
 ---
 
@@ -256,6 +265,7 @@ java.lang.RuntimeException
 - Java 方法通过注解暴露给 Lua 时，若抛出异常会被捕获并转换为 Lua 错误，然后在 Java 侧重新抛出：
   方法的 `RuntimeException`/`Error` **原样重抛**，其余 checked 异常统一包装为 `JavaInvocationError`（保留原因）。
 - 以上异常均为 `RuntimeException` 的子类，可直接 `catch (RuntimeException)` 统一处理。
+- Lua 调用 Java 方法抛出的异常会先转换为 Lua 错误（信息含 `java.lang.异常类: message`）；若该调用发生在 `doString` / `doFile` / `callFunction` 中，Java 侧会以 `LuaRuntimeError` 呈现并保留该信息。
 
 ---
 
@@ -343,7 +353,7 @@ A：确保类上有 `@LuaModule` 注解，方法上有 `@LuaFunction`，且方�
 A：捕获 `LuaRuntimeError`（语法错误为 `LuaSyntaxError`，二者均为 `RuntimeException` 子类）并查看错误信息，通常是 Lua 语法错误或运行时错误。
 
 **Q：`LuaFunctionObj` 必须调用 `destroy()` 吗？**  
-A：建议调用以尽快释放本机资源。得益于引用计数，即使忘记调用或先关闭了 `LuaRuntime`，也不会崩溃：底层状态会在最后一个引用释放（含 GC 时的 `finalize()` 兜底）后才真正关闭。
+A：建议调用以尽快释放本机资源。得益于引用计数，即使忘记调用或先关闭了 `LuaRuntime`，也不会崩溃：底层状态会在最后一个引用释放（含 GC 时的 `Cleaner` 兜底）后才真正关闭。
 
 **Q：如何传递数组或集合？**  
 A：目前支持通过 Java 方法返回数组，或使用 `java.newArray` 在 Lua 中创建 Java 数组，然后传入 Java 方法。
@@ -358,4 +368,4 @@ A：目前支持通过 Java 方法返回数组，或使用 `java.newArray` 在 L
 
 ---
 
-*本文档基于 LuaJavaNE v2.2.6.1 编写，如有变动请参考最新源码。*
+*本文档基于 LuaJavaNE v2.4.1 编写，如有变动请参考最新源码。*
