@@ -131,6 +131,18 @@ local proxy = java.createProxy({"java.lang.Runnable"}, handler)
 java.import("java.lang.Thread"):new(proxy):start()
 ~~~
 
+### 运行期加载 JAR
+
+~~~lua
+java.load("libs/mylib.jar")          -- 返回新增条目数；重复加载返回 0
+local Greeter = java.import("demo.Greeter")
+print(Greeter.hi("lua"))
+~~~
+
+也接受散装 class 目录（`java.load("build/classes")`）与多个路径（`java.load("a.jar", "b.jar")`）。加载失败会抛出 Lua 错误，信息包含具体原因。
+
+> JAR 通过独立的 `URLClassLoader`（父加载器为应用类加载器）加载，因此 classpath 中已有的同名类优先，且 JVM 无法卸载已加载的类；同一路径重复 `java.load` 不会生效。仅 `java.load` 能访问的类，其 `getResource`/`ServiceLoader`（TCCL）与 JAR 内 native 库不生效。
+
 ---
 
 ## Agent v2 异步 API（多线程）
@@ -462,6 +474,7 @@ luaj -h                 # 帮助
 | 函数 | 说明 |
 |------|------|
 | java.import("类名") | 导入 Java 类 |
+| java.load("lib.jar", ...) | 运行期附加 JAR/ZIP 或 class 目录，之后可 import 其中的类（返回新增条目数） |
 | 类:new(...) | 调用构造方法 |
 | 对象:方法(...) / 对象(...) | 调用实例方法；对象可直接调用（`__call`，调用其 `call` 方法） |
 | 类.静态方法(...) / 类:静态方法(...) | 调用静态方法（冒号形式自动剥离类 self 参数） |
@@ -574,6 +587,14 @@ make test   # 运行测试
 - Java `String` 中的 NUL 可保留在 Lua 字符串中，但部分按 C 字符串处理的 API（如 `luaL_checkstring` 路径）可能截断。
 - 非法 UTF-8 字节序列、孤立代理项统一替换为 `U+FFFD`，不做报错。
 - Java `char` / `Character` 只能表示 BMP 码点；Lua 侧传入增补平面字符时只能取高代理项。
+
+### 运行期加载 JAR
+
+- 类无法卸载：JAR 加载后常驻，同路径重复 `java.load` 不会重新读取文件。
+- 父加载器优先：classpath 中已有同名类会胜出且不报错，版本冲突不会提示。
+- 只影响类加载：`getResource`、`ServiceLoader`（TCCL）看不到 JAR 内资源，JAR 内 native 库也不生效。
+- `URLClassLoader` 持有 jar 文件句柄，Windows 下运行期无法删除或覆盖该 jar。
+- `java.load` 会执行任意本地代码，只应加载可信 JAR。
 
 ### 平台与构建
 

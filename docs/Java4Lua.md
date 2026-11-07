@@ -31,6 +31,37 @@ local System = java.import("java.lang.System")
 
 **注意**：类名必须使用全限定名（包名 + 类名），例如 `"java.lang.String"`。
 
+### 2.1 运行期加载 JAR（java.load）
+
+对于不在 classpath 中的类，可在运行期把 JAR/ZIP 或散装 class 目录附加进来，然后再 `import`：
+
+```lua
+java.load("libs/mylib.jar")
+local Greeter = java.import("demo.Greeter")
+print(Greeter.hi("lua"))
+```
+
+- 支持多个路径：`java.load("a.jar", "b.jar")`；也支持目录：`java.load("build/classes")`。
+- 返回值是本次新增的条目数；重复加载同一路径返回 `0`。
+- 路径按当前工作目录解析，内部会规范化为绝对路径。
+- 加载失败直接抛出 Lua 错误，例如：
+  - `java.load failed: java.io.IOException: path not found: /abs/nope.jar`
+  - `java.load failed: java.io.IOException: not a jar/zip file: /abs/foo.txt`
+
+**限制**：
+
+| 项 | 说明 |
+|---|---|
+| 类卸载 | JVM 不支持卸载类，加载后常驻；同路径重复 `java.load` 不会重新读取 |
+| 委派顺序 | 父加载器优先，classpath 中已有同名类会胜出且不报错 |
+| 资源 | `getResource`、`ServiceLoader`（线程上下文加载器）看不到仅由该 JAR 提供的资源 |
+| native 库 | 不支持 `System.loadLibrary` 风格的 JAR 内 native 库 |
+| 文件锁 | `URLClassLoader` 持有 jar 句柄，Windows 下运行期无法删除/覆盖该文件 |
+| 作用域 | 进程级共享（与 `java.store` 一致），跨 `LuaRuntime` 可见 |
+| 平台 | 只支持含 `.class` 的 jar，不支持 Android dex |
+
+`java.load` 会执行 JAR 中的代码，只应加载可信文件。`java.createProxy` 的接口、`java.runAsync` 的类名同样可以指向已加载 JAR 中的类型。
+
 ---
 
 ## 3. 创建 Java 对象（调用构造器）

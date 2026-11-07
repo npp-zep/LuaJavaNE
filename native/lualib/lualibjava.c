@@ -780,6 +780,41 @@ static char* take_java_exception_message(JNIEnv* env) {
     return msg ? msg : strdup("unknown java exception");
 }
 
+// 解析类名（支持 java.load 追加的 JAR/目录）：
+// 先走 JNI FindClass（原有路径，零回归），失败后回退到 JarLoader.resolve，
+// 因为 FindClass 只能看到声明 native 方法的类所在的应用类加载器。
+// 返回局部引用，调用方负责 DeleteLocalRef；找不到返回 NULL（挂起异常已清除）。
+static jclass resolve_class(JNIEnv* env, const char* className) {
+    if (!className || !*className) return NULL;
+
+    char* desc = strdup(className);
+    for (char* p = desc; *p; p++) if (*p == '.') *p = '/';
+    jclass cls = (*env)->FindClass(env, desc);
+    free(desc);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    if (cls) return cls;
+
+    jclass loaderCls = (*env)->FindClass(env, "com/luajava/JarLoader");
+    if (!loaderCls || (*env)->ExceptionCheck(env)) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        if (loaderCls) (*env)->DeleteLocalRef(env, loaderCls);
+        return NULL;
+    }
+    jmethodID mid = (*env)->GetStaticMethodID(env, loaderCls, "resolve",
+                                             "(Ljava/lang/String;)Ljava/lang/Class;");
+    if (!mid || (*env)->ExceptionCheck(env)) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, loaderCls);
+        return NULL;
+    }
+    jstring jname = utf8_to_jstring(env, className, strlen(className));
+    jobject resolved = jname ? (*env)->CallStaticObjectMethod(env, loaderCls, mid, jname) : NULL;
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    if (jname) (*env)->DeleteLocalRef(env, jname);
+    (*env)->DeleteLocalRef(env, loaderCls);
+    return (jclass)resolved;
+}
+
 // 反射重载解析核心：在 public 方法（或构造器）中按 lua_score_with_class 打分选出
 // 最匹配的一个，再装箱参数并调用。isCtor=1 时遍历 getConstructors()，name/wantStatic 忽略，
 // 结果走 NewObjectA 包成 Java 对象；isCtor=0 时遍历 getMethods() 并支持静态/实例与返回类型。
@@ -1836,10 +1871,7 @@ static int java_createProxy(lua_State* L) {
         }
         const char* name = lua_tostring(L, -1);
 
-        char* desc = strdup(name);
-        for (char* p = desc; *p; p++) if (*p == '.') *p = '/';
-        jclass iface = (*env)->FindClass(env, desc);
-        free(desc);
+        jclass iface = resolve_class(env, name);
         lua_pop(L, 1);
 
         if (!iface || (*env)->ExceptionCheck(env)) {
@@ -2089,17 +2121,52 @@ static int java_newArray(lua_State* L) {
 static int java_import(lua_State* L) {
     const char* className = luaL_checkstring(L, 1);
     JNIEnv* env = getEnv();
-    char* desc = strdup(className);
-    for (char* p = desc; *p; p++) if (*p == '.') *p = '/';
-    jclass cls = (*env)->FindClass(env, desc);
-    if (!cls || (*env)->ExceptionCheck(env)) {
-        (*env)->ExceptionClear(env); free(desc);
-        return luaL_error(L, "class not found: %s", className);
-        return 2;
+    jclass cls = resolve_class(env, className);
+    if (!cls) {
+        return luaL_error(L, "class not found: %s (if it lives in a jar, call java.load first)", className);
     }
-    free(desc);
     new_java_class_ud(L, cls);
     (*env)->DeleteLocalRef(env, cls);
+    return 1;
+}
+
+// ========== java.load(path, ...) ==========
+// 运行期附加 JAR/ZIP 或 class 目录。返回本次新增的条目数（重复加载返回 0）。
+static int java_load(lua_State* L) {
+    int n = lua_gettop(L);
+    if (n == 0) return luaL_error(L, "java.load requires at least one path");
+
+    JNIEnv* env = getEnv();
+    jclass cls = (*env)->FindClass(env, "com/luajava/JarLoader");
+    if (!cls || (*env)->ExceptionCheck(env)) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        return luaL_error(L, "java.load is unavailable: JarLoader not found");
+    }
+    jmethodID mid = (*env)->GetStaticMethodID(env, cls, "load", "(Ljava/lang/String;)I");
+    if (!mid || (*env)->ExceptionCheck(env)) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, cls);
+        return luaL_error(L, "java.load is unavailable: JarLoader.load missing");
+    }
+
+    int total = 0;
+    for (int i = 1; i <= n; i++) {
+        size_t len = 0;
+        const char* path = luaL_checklstring(L, i, &len);
+        jstring jpath = utf8_to_jstring(env, path, len);
+        jint added = jpath ? (*env)->CallStaticIntMethod(env, cls, mid, jpath) : 0;
+        if (jpath) (*env)->DeleteLocalRef(env, jpath);
+        if ((*env)->ExceptionCheck(env)) {
+            char* msg = take_java_exception_message(env);
+            (*env)->DeleteLocalRef(env, cls);
+            lua_pushfstring(L, "java.load failed: %s", msg ? msg : "unknown error");
+            free(msg);
+            return lua_error(L);
+        }
+        total += (int)added;
+    }
+    (*env)->DeleteLocalRef(env, cls);
+    lua_pushinteger(L, total);
     return 1;
 }
 
@@ -2571,6 +2638,7 @@ static int java_cleanup(lua_State* L) {
 }
 static const luaL_Reg javalib[] = {
     {"import",      java_import},
+    {"load",        java_load},
     {"toString",    java_toString},
     {"promise",     java_promise},
     {"await",       java_await},
