@@ -2,6 +2,15 @@
 
 All notable changes to LuaJavaNE will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **`java.load(path, {natives=true})`**: extracts native libraries (`.so` / `.dylib` / `.dll`) bundled in a JAR, filters them by the current `os.name`/`os.arch` platform markers, and registers them through the runtime loader's `findLibrary`, so `System.loadLibrary("foo")` inside JAR classes binds correctly. A plain `System.load` from the application loader cannot reach classes defined by the child loader, which is why the binding goes through `findLibrary`.
+- **Unused-path hints**: `java.load` now detects (a) classes shadowed by the application classpath, (b) the same class shipped by two loaded JARs, (c) native entries that match no platform, and (d) duplicate native library names. Each warning is printed to stderr and returned as the second Lua return value (string array, first 10 kept, then `further warnings suppressed`).
+
+### Changed
+- **`java.load` returns two values**: the number of newly added entries plus the warning list. Existing single-assignment usage (`local n = java.load(...)`) is unaffected.
+
 ## [2.5.0] - 2026-11-08
 
 ### Added

@@ -48,19 +48,49 @@ print(Greeter.hi("lua"))
   - `java.load failed: java.io.IOException: path not found: /abs/nope.jar`
   - `java.load failed: java.io.IOException: not a jar/zip file: /abs/foo.txt`
 
+#### 2.1.1 加载带本地库的 JAR
+
+很多 JNI 库把 `.so` / `.dylib` / `.dll` 一并打进 JAR，并在类里调用 `System.loadLibrary("foo")`。默认不会处理，需要显式打开：
+
+```lua
+local added, warnings = java.load("libs/native-lib.jar", {natives=true})
+for _, w in ipairs(warnings) do
+    print("[warn] " .. w)
+end
+
+local Calc = java.import("demo.Calc")
+print(Calc():add(2, 3))     -- 绑定成功后可正常调用 native 方法
+```
+
+- 选项表必须放在参数末尾，可与多路径组合：`java.load("a.jar", "b.jar", {natives=true})`。
+- 只提取与当前平台（`os.name` + `os.arch`，如 `linux-x86_64`）匹配的条目；路径里带 `windows-x86_64`、`aarch64` 等其它平台标记的会被跳过。
+- 库名按文件名推导：`libcalc.so` / `calc.dll` → `System.loadLibrary("calc")` 可绑定。
+- 解压目录为 `java.io.tmpdir/luajavane-natives/<指纹>`，指纹包含 JAR 路径、大小与修改时间。
+- 为什么必须这样做：JVM 按“声明 native 方法的类所属加载器”查找 native 实现，父加载器 `System.load` 的库对子加载器定义的类不可见；这里通过重写 `findLibrary` 把提取路径交给 JVM。
+
+**告警**：以下情况会打印到 stderr，并作为 `java.load` 的第二个返回值（字符串数组）返回，最多 10 条，之后折叠为 `further warnings suppressed`。
+
+| 场景 | 告警内容 |
+|---|---|
+| classpath 已提供同名类 | `class X is already provided by the application classpath; the copy in <jar> is shadowed` |
+| 两个已加载 JAR 含同名类 | `class X exists in both <a> and <b>; the copy in <b> will not be used` |
+| 告警本地库但无匹配平台 | `no native library matching <platform> found in <jar> (N entries skipped)` |
+| 同名本地库来自不同 JAR | `native library 'x' already provided by <a>; ignoring <b>` |
+
 **限制**：
 
 | 项 | 说明 |
 |---|---|
 | 类卸载 | JVM 不支持卸载类，加载后常驻；同路径重复 `java.load` 不会重新读取 |
-| 委派顺序 | 父加载器优先，classpath 中已有同名类会胜出且不报错 |
+| 委派顺序 | 父加载器优先，classpath 中已有同名类会胜出（加载时给出告警，但不会改变结果） |
 | 资源 | `getResource`、`ServiceLoader`（线程上下文加载器）看不到仅由该 JAR 提供的资源 |
-| native 库 | 不支持 `System.loadLibrary` 风格的 JAR 内 native 库 |
+| native 库 | 需 `{natives=true}`；且 JAR 代码必须自己调用 `System.loadLibrary` / `System.load`，仅声明 native 方法不会自动绑定 |
+| 平台 | 只提取当前平台条目；`java.io.tmpdir` 不可写会直接失败 |
 | 文件锁 | `URLClassLoader` 持有 jar 句柄，Windows 下运行期无法删除/覆盖该文件 |
 | 作用域 | 进程级共享（与 `java.store` 一致），跨 `LuaRuntime` 可见 |
-| 平台 | 只支持含 `.class` 的 jar，不支持 Android dex |
+| 格式 | 只支持含 `.class` 的 jar，不支持 Android dex |
 
-`java.load` 会执行 JAR 中的代码，只应加载可信文件。`java.createProxy` 的接口、`java.runAsync` 的类名同样可以指向已加载 JAR 中的类型。
+`java.load` 会执行 JAR 中的代码（含本地库），只应加载可信文件。`java.createProxy` 的接口、`java.runAsync` 的类名同样可以指向已加载 JAR 中的类型。
 
 ---
 

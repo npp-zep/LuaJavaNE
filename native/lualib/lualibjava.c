@@ -2131,9 +2131,19 @@ static int java_import(lua_State* L) {
 }
 
 // ========== java.load(path, ...) ==========
-// 运行期附加 JAR/ZIP 或 class 目录。返回本次新增的条目数（重复加载返回 0）。
+// 运行期附加 JAR/ZIP 或 class 目录。
+// 最后一个参数可以是选项表 {natives=true}，请求提取并绑定 JAR 内本地库。
+// 返回：新增条目数、本次告警列表（table）。
 static int java_load(lua_State* L) {
-    int n = lua_gettop(L);
+    int top = lua_gettop(L);
+    int natives = 0;
+    if (top >= 1 && lua_istable(L, top)) {
+        lua_getfield(L, top, "natives");
+        natives = lua_toboolean(L, -1);
+        lua_pop(L, 1);
+        top--;
+    }
+    int n = top;
     if (n == 0) return luaL_error(L, "java.load requires at least one path");
 
     JNIEnv* env = getEnv();
@@ -2142,11 +2152,21 @@ static int java_load(lua_State* L) {
         if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
         return luaL_error(L, "java.load is unavailable: JarLoader not found");
     }
-    jmethodID mid = (*env)->GetStaticMethodID(env, cls, "load", "(Ljava/lang/String;)I");
+    jmethodID mid = (*env)->GetStaticMethodID(env, cls, "load", "(Ljava/lang/String;Z)I");
     if (!mid || (*env)->ExceptionCheck(env)) {
         if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
         (*env)->DeleteLocalRef(env, cls);
         return luaL_error(L, "java.load is unavailable: JarLoader.load missing");
+    }
+
+    // 丢弃上一次调用遗留的告警，保证返回值只描述本次加载。
+    jmethodID drain = (*env)->GetStaticMethodID(env, cls, "drainWarnings", "()[Ljava/lang/String;");
+    if (!drain) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    } else {
+        jobject old = (*env)->CallStaticObjectMethod(env, cls, drain);
+        if (old) (*env)->DeleteLocalRef(env, old);
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
     }
 
     int total = 0;
@@ -2154,7 +2174,9 @@ static int java_load(lua_State* L) {
         size_t len = 0;
         const char* path = luaL_checklstring(L, i, &len);
         jstring jpath = utf8_to_jstring(env, path, len);
-        jint added = jpath ? (*env)->CallStaticIntMethod(env, cls, mid, jpath) : 0;
+        jint added = jpath
+            ? (*env)->CallStaticIntMethod(env, cls, mid, jpath, (jboolean)(natives ? JNI_TRUE : JNI_FALSE))
+            : 0;
         if (jpath) (*env)->DeleteLocalRef(env, jpath);
         if ((*env)->ExceptionCheck(env)) {
             char* msg = take_java_exception_message(env);
@@ -2165,9 +2187,35 @@ static int java_load(lua_State* L) {
         }
         total += (int)added;
     }
+
+    int warnCount = 0;
+    if (drain) {
+        jobjectArray arr = (jobjectArray)(*env)->CallStaticObjectMethod(env, cls, drain);
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            arr = NULL;
+        }
+        lua_createtable(L, arr ? (*env)->GetArrayLength(env, arr) : 0, 0);
+        if (arr) {
+            jsize count = (*env)->GetArrayLength(env, arr);
+            for (jsize i = 0; i < count; i++) {
+                jstring js = (jstring)(*env)->GetObjectArrayElement(env, arr, i);
+                const char* s = js ? (*env)->GetStringUTFChars(env, js, NULL) : NULL;
+                lua_pushstring(L, s ? s : "");
+                if (s) (*env)->ReleaseStringUTFChars(env, js, s);
+                if (js) (*env)->DeleteLocalRef(env, js);
+                lua_rawseti(L, -2, ++warnCount);
+            }
+            (*env)->DeleteLocalRef(env, arr);
+        }
+    } else {
+        lua_createtable(L, 0, 0);
+    }
+
     (*env)->DeleteLocalRef(env, cls);
     lua_pushinteger(L, total);
-    return 1;
+    lua_insert(L, -2);
+    return 2;
 }
 
 static int java_toString(lua_State* L) {

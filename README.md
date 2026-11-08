@@ -141,7 +141,16 @@ print(Greeter.hi("lua"))
 
 也接受散装 class 目录（`java.load("build/classes")`）与多个路径（`java.load("a.jar", "b.jar")`）。加载失败会抛出 Lua 错误，信息包含具体原因。
 
-> JAR 通过独立的 `URLClassLoader`（父加载器为应用类加载器）加载，因此 classpath 中已有的同名类优先，且 JVM 无法卸载已加载的类；同一路径重复 `java.load` 不会生效。仅 `java.load` 能访问的类，其 `getResource`/`ServiceLoader`（TCCL）与 JAR 内 native 库不生效。
+若 JAR 依赖自带的本地库（`.so` / `.dylib` / `.dll`），把选项表放在参数末尾：
+
+~~~lua
+local added, warnings = java.load("libs/native-lib.jar", {natives=true})
+for _, w in ipairs(warnings) do print("[warn] " .. w) end
+~~~
+
+`natives=true` 会按当前平台（如 `linux-x86_64`）筛选 JAR 内本地库，解压到临时目录并注册给加载器的 `findLibrary`，JAR 代码里的 `System.loadLibrary("foo")` 才能绑定成功。同名类覆盖、跨 JAR 重复、平台不匹配等告警会打印到 stderr，同时作为第二个返回值返回。
+
+> JAR 通过独立的 `URLClassLoader`（父加载器为应用类加载器）加载，因此 classpath 中已有的同名类优先（会在加载时给出 `shadowed` 告警），且 JVM 无法卸载已加载的类；同一路径重复 `java.load` 不会生效。仅 `java.load` 能访问的类，其 `getResource`/`ServiceLoader`（TCCL）仍然看不到 JAR 内资源。
 
 ---
 
@@ -474,7 +483,7 @@ luaj -h                 # 帮助
 | 函数 | 说明 |
 |------|------|
 | java.import("类名") | 导入 Java 类 |
-| java.load("lib.jar", ...) | 运行期附加 JAR/ZIP 或 class 目录，之后可 import 其中的类（返回新增条目数） |
+| java.load("lib.jar", ...) | 运行期附加 JAR/ZIP 或 class 目录，之后可 import 其中的类；`{natives=true}` 同时绑定 JAR 内本地库（返回新增条目数 + 告警列表） |
 | 类:new(...) | 调用构造方法 |
 | 对象:方法(...) / 对象(...) | 调用实例方法；对象可直接调用（`__call`，调用其 `call` 方法） |
 | 类.静态方法(...) / 类:静态方法(...) | 调用静态方法（冒号形式自动剥离类 self 参数） |
@@ -591,10 +600,13 @@ make test   # 运行测试
 ### 运行期加载 JAR
 
 - 类无法卸载：JAR 加载后常驻，同路径重复 `java.load` 不会重新读取文件。
-- 父加载器优先：classpath 中已有同名类会胜出且不报错，版本冲突不会提示。
-- 只影响类加载：`getResource`、`ServiceLoader`（TCCL）看不到 JAR 内资源，JAR 内 native 库也不生效。
+- 父加载器优先：classpath 中已有同名类会胜出，加载时会给出 `shadowed` 告警（最多 10 条，之后折叠为 `further warnings suppressed`）。
+- 同名类跨 JAR 重复时，只有先加载的那份生效，加载第二个 JAR 时会给出 `exists in both ...` 告警。
+- 只影响类加载：`getResource`、`ServiceLoader`（TCCL）看不到 JAR 内资源。
+- 本地库需显式 `{natives=true}`：只提取当前平台匹配的条目；JAR 代码必须自己调用 `System.loadLibrary` / `System.load` 才会绑定，声明了 native 方法却从不加载的库无法自动生效。
+- 本地库解压到 `java.io.tmpdir/luajavane-natives/`，磁盘不可写或库格式不匹配会抛出 `java.load failed: java.io.IOException: ...`。
 - `URLClassLoader` 持有 jar 文件句柄，Windows 下运行期无法删除或覆盖该 jar。
-- `java.load` 会执行任意本地代码，只应加载可信 JAR。
+- `java.load` 会执行任意本地代码（含本地库），只应加载可信 JAR。
 
 ### 平台与构建
 
