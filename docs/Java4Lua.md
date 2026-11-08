@@ -612,4 +612,4 @@ print(java.fetch("counter"))     -- 100
 - Java 侧 API 文档（LuaRuntime 等）见 `docs/` 目录或源码注释。
 
 ---
-*本文档对应 LuaJavaNE 版本 2.5.0。*
+*本文档对应 LuaJavaNE 版本 2.5.1。*

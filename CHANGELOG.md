@@ -2,7 +2,7 @@
 
 All notable changes to LuaJavaNE will be documented in this file.
 
-## [Unreleased]
+## [2.5.1] - 2026-11-08
 
 ### Added
 - **`java.load(path, {natives=true})`**: extracts native libraries (`.so` / `.dylib` / `.dll`) bundled in a JAR, filters them by the current `os.name`/`os.arch` platform markers, and registers them through the runtime loader's `findLibrary`, so `System.loadLibrary("foo")` inside JAR classes binds correctly. A plain `System.load` from the application loader cannot reach classes defined by the child loader, which is why the binding goes through `findLibrary`.
