@@ -45,14 +45,32 @@ L.doFile("/path/to/script.lua");
 
 ### 2.3 编译函数（预编译）
 
-对于需要多次调用的函数，可以预编译为 `LuaFunctionObj` 以提高性能：
+对于需要多次调用的函数，可以预编译为 `LuaFunctionObj` 以提高性能。注意 `compile()` 编译的是一个 **chunk**，若 chunk 本身返回函数，需要先调用一次才能拿到该函数：
 
 ```java
-LuaFunctionObj fn = L.compile("return function(a, b) return a + b end");
-// 调用编译后的函数（返回一个 Lua 函数对象）
-Object[] results = fn.callMultiple(3, 5); // results[0] == 8
-fn.destroy(); // 释放本机引用
+LuaFunctionObj chunk = L.compile("return function(a, b) return a + b end");
+LuaFunctionObj add = (LuaFunctionObj) chunk.call();   // 执行 chunk，得到内部函数
+Object[] results = add.callMultiple(3, 5);            // results[0] == 8
+chunk.destroy();
+add.destroy(); // 释放本机引用
 ```
+
+编译失败（`LUA_ERRSYNTAX`）会抛出 `LuaSyntaxError`（`LuaRuntimeError` 的子类），而不是返回 `null`。
+
+### 2.4 LuaRuntime 方法速查
+
+| 方法 | 说明 |
+|---|---|
+| `void doString(String)` / `void doFile(String)` | 执行脚本；语法错误抛 `LuaSyntaxError`，运行错误抛 `LuaRuntimeError` |
+| `LuaFunctionObj compile(String)` | 编译 chunk；返回 `LuaFunctionObj` |
+| `Object callFunction(String, Object...)` | 调用全局函数，返回第一个值 |
+| `Object[] callFunctionMultiple(String, Object...)` | 调用全局函数，返回全部值 |
+| `void setGlobal(String, Object)` | 写入全局变量（见第 4 章） |
+| `String getGlobal(String)` | 读取全局变量并转为字符串 |
+| `Object getGlobalObject(String)` | 读取全局变量并保留原始类型（含 `LuaTable`/`LuaFunctionObj`） |
+| `void registerModule(Object)` | 注册 `@LuaModule`/`@LuaFunction` 注解对象（见第 5 章） |
+| `void close()` | 关闭本实例（`AutoCloseable`） |
+
 
 ---
 
@@ -146,7 +164,7 @@ L.doString("print(math_mul(6, 7))");   // 输出 42
 - 若未指定 `@LuaModule.value()`，则使用空前缀，函数名即为方法名（或 `@LuaFunction.value()`）。
 - 若指定了前缀，则生成全局函数名为 `前缀_函数名`（例如 `math_add`）。
 
-支持的方法参数类型：`int`、`long`、`double`、`float`、`boolean`、`String`，以及这些类型的包装类。返回值同样支持上述类型，也可以返回任意 Java 对象（会被包装为 userdata）。
+支持的方法参数类型：`int`、`long`、`double`、`float`、`boolean`、`String`，以及这些类型的包装类；也支持 `LuaTable`、`LuaFunctionObj` 与任意 Java 对象/数组（按第 7 节映射）。返回值同样支持上述类型，也可以返回任意 Java 对象（会被包装为 userdata）。
 
 ---
 
@@ -192,7 +210,7 @@ doubler.destroy();
 | `java.lang.Double` / `double`| `number`      |
 | `java.lang.Float` / `float`  | `number`      |
 | `java.lang.Boolean` / `boolean`| `boolean`   |
-| 其他对象                 | `userdata`（Java 对象代理） |
+| 其他对象                 | `userdata`（Java 对象代理；`Map`/`List` 额外带 table 语义） |
 
 ### 7.2 Lua → Java
 
@@ -204,12 +222,58 @@ doubler.destroy();
 | `number`    | `java.lang.Double`          |
 | `string`    | `java.lang.String`          |
 | `function`  | `com.luajava.LuaFunctionObj` |
-| `table`     | 暂不支持直接转换（可设计为 Map） |
+| `table`     | `com.luajava.LuaTable`（惰性活引用，见 7.3） |
 | `userdata`  | 保持原 Java 对象引用（如果是通过 Java 传入的） |
 
 当 Lua 函数返回一个 Java 对象时（如通过 Java 方法返回的对象），该对象会被包装为 `userdata`，并在 Java 侧以原类型返回。
 
 > **字符串编码**：Java `String` → Lua 使用标准 UTF-8（emoji 等增补平面字符为 4 字节）；Lua 字符串 → Java 同样按标准 UTF-8 解码。非法 UTF-8 序列或孤立 UTF-16 代理项会替换为 `U+FFFD`。
+
+### 7.3 LuaTable：在 Java 中操作 Lua table
+
+`table` 与 `function` 返回的是**惰性引用**，不复制数据。`LuaTable` 的每次 `get`/`put` 都经 JNI 直接读写原表，因此 Java 侧的修改对 Lua 立即可见，反之亦然。典型来源有三处：
+
+1. Lua 调用 Java 方法时，形参声明为 `LuaTable`；
+2. `L.getGlobalObject("t")` 读取一个 table 全局变量；
+3. `@LuaFunction` 方法的返回值/参数。
+
+```java
+// Lua: t = { name = "lua", n = 5, 10, 20, 30 }
+LuaTable t = (LuaTable) L.getGlobalObject("t");
+String name = (String) t.get("name");   // "lua"
+int n = ((Number) t.get("n")).intValue(); // 5
+int len = t.size();                      // 3（# 语义，仅数组部分）
+Object[] keys = t.keys();                // 全部键（各自还原为 Java 类型）
+
+t.put("fromJava", "yes");                // 写回，Lua 侧立即可见
+t.destroy();                             // 用完释放注册表引用（幂等）
+```
+
+| 方法 | 说明 |
+|---|---|
+| `Object get(Object key)` | 读取键；`nil`/不存在返回 `null`，`table`/`function` 分别返回 `LuaTable`/`LuaFunctionObj` |
+| `void put(Object key, Object value)` | 写入/覆盖；Java 对象会按第 7.1 节规则压栈 |
+| `int size()` | Lua `#`（`rawlen`），仅对数组部分精确 |
+| `Object[] keys()` | 遍历全部键 |
+| `void destroy()` | 释放引用；未调用时由 `Cleaner` 兜底 |
+
+> `LuaTable` 与 `LuaFunctionObj` 一样会持有 `lua_State` 的引用计数：即使先 `L.close()`，状态也会等最后一个引用释放后才真正关闭。销毁后再调用 `get`/`put`/`size`/`keys` 会抛出 `IllegalStateException`。
+
+### 7.4 把 Lua 函数作为参数传给 Java
+
+Lua 函数传入 Java 时同样以 `LuaFunctionObj` 接收，可在 Java 侧直接回调：
+
+```java
+public static Object applyTwice(LuaFunctionObj f, Object x) {
+    Object once = f.call(x);
+    return f.call(once);
+}
+```
+
+```lua
+local r = TestBridge.applyTwice(function(v) return v * 2 end, 10)  -- 40
+```
+
 
 ---
 
@@ -301,9 +365,45 @@ LuaAgent.shutdown();
 
 但通常无需手动操作。
 
+Java 侧还可直接使用 `LuaAgent` 的公开入口：`submitTask(AgentTask)` / `submitTaskFuture(...)`（异步任务）、`cancelTask` / `awaitTask`（取消与等待）、`registerObject` / `getObject` / `unregisterObject`（对象池）、`getTaskStats` / `getRegistryStats`（统计）以及 `shutdown` / `shutdownNow`。任务与对象的详细语义见 [AgentV2.md](AgentV2.md) 的“Java 侧扩展”一节。
+
 ---
 
-## 11. 完整示例
+## 11. 运行期加载 JAR（Java 侧）
+
+Lua 侧对应 `java.load(path, {natives=true})`；Java 侧直接使用 `com.luajava.JarLoader`。它是**进程级**的：所有 `LuaRuntime` 共享同一个 `URLClassLoader`，重复加载同一路径会被去重。
+
+```java
+import com.luajava.JarLoader;
+
+int added = JarLoader.load("libs/mylib.jar");          // 1=新增，0=已加载过
+Class<?> greeter = JarLoader.resolve("demo.Greeter");  // 找不到返回 null（不初始化类）
+ClassLoader cl = JarLoader.loader();                   // 供代理/异步等需要 loader 的场景
+String[] paths = JarLoader.loadedPaths();              // 已加载路径快照
+```
+
+带本地库（`.so` / `.dylib` / `.dll`）的 JAR：
+
+```java
+JarLoader.load("libs/native-lib.jar", true);   // true = 提取并绑定本地库
+for (String w : JarLoader.drainWarnings()) {
+    System.err.println("[warn] " + w);
+}
+```
+
+| 方法 | 说明 |
+|---|---|
+| `int load(String path)` / `int load(String path, boolean natives)` | 附加 JAR/ZIP 或 class 目录；`natives=true` 时按当前平台提取本地库并注册给 `findLibrary`；路径非法或提取失败抛 `IOException` |
+| `Class<?> resolve(String binaryName)` | 用运行期加载器解析类；失败返回 `null`（等价于 `Class.forName(name, false, loader)`） |
+| `ClassLoader loader()` | 运行期加载器，可传给 `Proxy`、`ServiceLoader` 等 |
+| `String[] loadedPaths()` | 已加载路径快照（诊断用） |
+| `String[] drainWarnings()` | 取出并清空告警：类被 classpath 遮蔽、跨 JAR 重复类、无匹配平台的本地库、重复库名；最多保留 10 条，其余汇总为 `further warnings suppressed` |
+
+注意：父加载器优先，JAR 与 classpath 同名类时使用 classpath 版本；JVM 无法卸载类，也不支持同一类名在两个加载器中共存。
+
+---
+
+## 12. 完整示例
 
 ```java
 import com.luajava.LuaRuntime;
@@ -344,7 +444,7 @@ public class Main {
 
 ---
 
-## 12. 常见问题
+## 13. 常见问题
 
 **Q：为什么我的 Java 方法没有被注册？**  
 A：确保类上有 `@LuaModule` 注解，方法上有 `@LuaFunction`，且方法为 `public`。
@@ -356,11 +456,17 @@ A：捕获 `LuaRuntimeError`（语法错误为 `LuaSyntaxError`，二者均为 `
 A：建议调用以尽快释放本机资源。得益于引用计数，即使忘记调用或先关闭了 `LuaRuntime`，也不会崩溃：底层状态会在最后一个引用释放（含 GC 时的 `Cleaner` 兜底）后才真正关闭。
 
 **Q：如何传递数组或集合？**  
-A：目前支持通过 Java 方法返回数组，或使用 `java.newArray` 在 Lua 中创建 Java 数组，然后传入 Java 方法。
+A：Java 数组作为 `Java.Array` userdata 传入/返回（0 基索引、`#` 取长度）；`java.util.Map`/`List` 会包成带 table 语义的惰性 userdata（`#`、`pairs`/`ipairs`、写回）。Lua 原生 `table` 则以 `LuaTable` 活引用传入 Java（见 7.3）。
+
+**Q：如何在 Java 中拿到 Lua table 或函数？**  
+A：用 `L.getGlobalObject(name)` 取回原始类型：table 得到 `LuaTable`，function 得到 `LuaFunctionObj`；也可在 `@LuaFunction` 方法/普通 Java 方法形参中直接声明这两种类型。
+
+**Q：Java 侧如何加载带本地库的 JAR？**  
+A：`JarLoader.load(path, true)`；告警通过 `JarLoader.drainWarnings()` 读取，详见第 11 章。
 
 ---
 
-## 13. 更多资源
+## 14. 更多资源
 
 - 项目源码：`java/src/com/luajava/` 包含所有 Java API 类
 - 示例脚本：`examples/` 目录下的 Lua 示例
@@ -368,4 +474,4 @@ A：目前支持通过 Java 方法返回数组，或使用 `java.newArray` 在 L
 
 ---
 
-*本文档基于 LuaJavaNE v2.5.1 编写，如有变动请参考最新源码。*
+*本文档基于 LuaJavaNE v2.5.1 及之后的未发布改动编写，如有变动请参考最新源码。*

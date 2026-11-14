@@ -2,7 +2,8 @@ local java = require("java")
 
 print("=== table 双向互调测试 ===")
 
-local TestBridge = java.import("testpkg.TestBridge")
+-- 测试夹具位于 test/ 目录，先运行 `make test` 将其编译到 out/
+local TestBridge = java.import("com.luajava.TestBridge")
 
 -- ===== 方向 A：Lua table -> Java (LuaTable 惰性引用) =====
 print("\n--- 方向 A: Lua table -> Java (LuaTable) ---")
@@ -16,10 +17,10 @@ local t = {
 }
 
 -- Java 端惰性读取（不复制）
-TestBridge.analyze(t)          -- 期望 size=3, name=world, n=42, ok=true
+print(TestBridge.analyze(t))   -- 期望 name=world n=42 ok=true size=3
 
 -- Java 端遍历键
-TestBridge.countKeys(t)
+print("countKeys =", TestBridge.countKeys(t))
 
 -- Java 端原地写回，Lua 侧立即可见（活引用）
 print("方向A写回前 t.x =", t.x)

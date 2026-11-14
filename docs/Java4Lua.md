@@ -219,11 +219,14 @@ Lua 的 table 可直接作为 Java 参数传入，Java 侧以 `com.luajava.LuaTa
 
 ```lua
 -- Lua 侧：调用接收 LuaTable 的 Java 方法
+local TestBridge = java.import("com.luajava.TestBridge")  -- 测试夹具，见 test/TestBridge.java
 local t = { name = "lua", n = 5 }
 TestBridge.analyze(t)   -- Java 读取字段
 TestBridge.touch(t)     -- Java 原地修改
 print(t.x)              -- 50（Java 写入后 Lua 立即可见）
 ```
+
+> `TestBridge` 是 `test/` 下的测试夹具，运行 `make test` 后位于 `out/`；后续小节沿用该 import。
 
 ```java
 // Java 侧

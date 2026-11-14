@@ -2,6 +2,14 @@
 
 All notable changes to LuaJavaNE will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- **`testpkg.TestBridge` moved back into `test/`**: the fixture is now `test/TestBridge.java` (package `com.luajava`) and its demo-style `System.out` calls are replaced by return values asserted in the new JUnit suite `TestBridgeTest`, which covers the same Lua↔Java table interop through the `java.import` path. Release jars no longer carry `testpkg`; `examples/table_bridge.lua` imports `com.luajava.TestBridge` and therefore needs `make test` first.
+
+### Docs
+- **`docs/Lua4Java.md` aligned with the current Java API**: fixed the `compile()` example (a chunk must be called before invoking the returned function), documented `LuaTable`/`LuaFunctionObj` type mapping and the `LuaTable` methods, added a `LuaRuntime` method cheat-sheet, a `JarLoader` section (including `natives=true` and warnings), and refreshed the FAQ/type-mapping notes.
+
 ## [2.5.1] - 2026-11-08
 
 ### Added

@@ -1,17 +1,19 @@
-package testpkg;
+package com.luajava;
 
-import com.luajava.LuaTable;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
-/** 验证 table 双向互调的桥接测试类（无字段，纯静态方法，供 Lua 调用）。 */
+/** 测试夹具：table 双向互调的 Java 侧（无字段，纯静态方法，供 Lua 经 java.import 调用）。 */
 public class TestBridge {
 
-    /** 方向 A（Lua→Java）：Java 按 LuaTable 惰性读取字段并打印。 */
-    public static void analyze(LuaTable t) {
-        System.out.println("[java] analyze name=" + t.get("name")
+    /** 方向 A（Lua→Java）：Java 按 LuaTable 惰性读取字段并汇总。 */
+    public static String analyze(LuaTable t) {
+        return "name=" + t.get("name")
                 + " n=" + t.get("n")
                 + " ok=" + t.get("ok")
-                + " size=" + t.size());
+                + " size=" + t.size();
     }
 
     /** 方向 A 活引用写回：Java 原地修改 table，Lua 侧应立即可见。 */
@@ -25,9 +27,7 @@ public class TestBridge {
 
     /** Java 侧遍历 Lua table 的键。 */
     public static long countKeys(LuaTable t) {
-        Object[] keys = t.keys();
-        System.out.println("[java] countKeys(" + keys.length + ") firstKey=" + keys[0]);
-        return keys.length;
+        return t.keys().length;
     }
 
     /** 方向 B（Java→Lua）：返回 Map，Lua 侧应得到惰性 JavaTable。 */
