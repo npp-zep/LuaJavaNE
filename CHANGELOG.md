@@ -2,6 +2,29 @@
 
 All notable changes to LuaJavaNE will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- **`testpkg.TestBridge` moved back into `test/`**: the fixture is now `test/TestBridge.java` (package `com.luajava`) and its demo-style `System.out` calls are replaced by return values asserted in the new JUnit suite `TestBridgeTest`, which covers the same Lua↔Java table interop through the `java.import` path. Release jars no longer carry `testpkg`; `examples/table_bridge.lua` imports `com.luajava.TestBridge` and therefore needs `make test` first.
+
+### Docs
+- **`docs/Lua4Java.md` aligned with the current Java API**: fixed the `compile()` example (a chunk must be called before invoking the returned function), documented `LuaTable`/`LuaFunctionObj` type mapping and the `LuaTable` methods, added a `LuaRuntime` method cheat-sheet, a `JarLoader` section (including `natives=true` and warnings), and refreshed the FAQ/type-mapping notes.
+
+## [2.5.1] - 2026-11-08
+
+### Added
+- **`java.load(path, {natives=true})`**: extracts native libraries (`.so` / `.dylib` / `.dll`) bundled in a JAR, filters them by the current `os.name`/`os.arch` platform markers, and registers them through the runtime loader's `findLibrary`, so `System.loadLibrary("foo")` inside JAR classes binds correctly. A plain `System.load` from the application loader cannot reach classes defined by the child loader, which is why the binding goes through `findLibrary`.
+- **Unused-path hints**: `java.load` now detects (a) classes shadowed by the application classpath, (b) the same class shipped by two loaded JARs, (c) native entries that match no platform, and (d) duplicate native library names. Each warning is printed to stderr and returned as the second Lua return value (string array, first 10 kept, then `further warnings suppressed`).
+
+### Changed
+- **`java.load` returns two values**: the number of newly added entries plus the warning list. Existing single-assignment usage (`local n = java.load(...)`) is unaffected.
+
+## [2.5.0] - 2026-11-08
+
+### Added
+- **`java.load(path, ...)`**: attaches JAR/ZIP files or plain class directories to a process-wide `URLClassLoader` at runtime, so `java.import`, `java.createProxy` and `java.runAsync` can reach classes that are not on the startup classpath. Accepts multiple paths, de-duplicates by absolute path, returns the number of newly added entries, and raises a Lua error with the concrete reason on failure. `java.import` now falls back to that loader when JNI `FindClass` misses (the JNI loader cannot see runtime-added URLs).
+- **`JarLoader`** (Java): public `load`, `resolve`, `loader()` and `loadedPaths()` helpers.
+
 ## [2.4.1] - 2026-11-07
 
 ### Added

@@ -348,6 +348,7 @@ end
 6. **协程交互**：Promise 机制与 Lua 协程兼容：可在协程中轮询，也可用 `java.await` 直接等待（由工作线程恢复协程）。
 7. **对象参数生命周期**：Java 对象参数由参数对象池持有，`AsyncRunner` 在任务结束后释放。若线程池直接拒绝任务（`AbortPolicy`），引用可能残留到进程结束。
 8. **全局锁**：所有 `LuaRuntime` 共享一把递归 `lua_mutex`，一个状态长时间执行 Lua 会阻塞其他状态的异步回调与 `await` 恢复；回调内不要长时间持锁。
+9. **类名解析**：`runAsync` 的类名先按应用 classpath 解析，再回退到 `java.load` 附加的加载器，因此可以调用运行期 JAR 中的类；但已加载的类无法卸载，同名类以 classpath 为准。
 
 ---
 
@@ -386,6 +387,8 @@ A: 放在 `coroutine` 内，主线程循环调用 `java.yield(ms)` 让出 Lua �
 
 ## 版本历史
 
+- **v2.5.1**：`java.load(path, {natives=true})` 支持提取并绑定 JAR 内含的 `.so`/`.dylib`/`.dll`（按平台过滤，经 `findLibrary` 绑定）；新增类覆盖、跨 JAR 重复、平台不匹配等告警，作为第二个返回值返回并输出到 stderr。
+- **v2.5.0**：新增 `java.load(path, ...)`，可在运行期附加 JAR/ZIP 或 class 目录，`java.import`、`java.createProxy`、`java.runAsync` 均可访问其中的类。
 - **v2.4.1**：修复 7 参及以上 Java 方法调用的签名缓冲栈溢出（自动回退反射）；Java/Lua 字符串统一按标准 UTF-8 转换（emoji 可正确往返、`char` 不再截断）；同步调用异常保留 Java 异常类名与消息；异步支持 Java 对象参数，`java.await` 可由任务完成恢复协程；新增 `java.cleanup()` 清空全局存储。
 - **v2.4.0**：`java.promise(true)` 可选把 `Object[]` 结果展开为多值；结果池淘汰不再静默（`java.getObject` 明确报错，`LuaAgent.wasEvicted` / `getRegistryStats` 可查询）；异步参数新增 `short`/`byte`/`char`/`BigInteger`/`BigDecimal`/枚举支持并改进重载匹配；超时检查改用单一调度线程；Promise 生命周期统一由 `Cleaner` 管理。
 - **v2.2.5**：新增回调式消费 API `java.onComplete(id, callback)`，与 `checkPromise` 轮询并存，用户按需二选一；新增 `java.yield(ms)` 等待原语（释放 Lua 锁）；统一 PromiseEntry 生命周期清理。
@@ -404,4 +407,4 @@ A: 放在 `coroutine` 内，主线程循环调用 `java.yield(ms)` 让出 Lua �
 
 ---
 
-*文档最后更新：v2.4.1*
+*文档最后更新：v2.5.1*

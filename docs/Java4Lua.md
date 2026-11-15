@@ -31,6 +31,67 @@ local System = java.import("java.lang.System")
 
 **注意**：类名必须使用全限定名（包名 + 类名），例如 `"java.lang.String"`。
 
+### 2.1 运行期加载 JAR（java.load）
+
+对于不在 classpath 中的类，可在运行期把 JAR/ZIP 或散装 class 目录附加进来，然后再 `import`：
+
+```lua
+java.load("libs/mylib.jar")
+local Greeter = java.import("demo.Greeter")
+print(Greeter.hi("lua"))
+```
+
+- 支持多个路径：`java.load("a.jar", "b.jar")`；也支持目录：`java.load("build/classes")`。
+- 返回值是本次新增的条目数；重复加载同一路径返回 `0`。
+- 路径按当前工作目录解析，内部会规范化为绝对路径。
+- 加载失败直接抛出 Lua 错误，例如：
+  - `java.load failed: java.io.IOException: path not found: /abs/nope.jar`
+  - `java.load failed: java.io.IOException: not a jar/zip file: /abs/foo.txt`
+
+#### 2.1.1 加载带本地库的 JAR
+
+很多 JNI 库把 `.so` / `.dylib` / `.dll` 一并打进 JAR，并在类里调用 `System.loadLibrary("foo")`。默认不会处理，需要显式打开：
+
+```lua
+local added, warnings = java.load("libs/native-lib.jar", {natives=true})
+for _, w in ipairs(warnings) do
+    print("[warn] " .. w)
+end
+
+local Calc = java.import("demo.Calc")
+print(Calc():add(2, 3))     -- 绑定成功后可正常调用 native 方法
+```
+
+- 选项表必须放在参数末尾，可与多路径组合：`java.load("a.jar", "b.jar", {natives=true})`。
+- 只提取与当前平台（`os.name` + `os.arch`，如 `linux-x86_64`）匹配的条目；路径里带 `windows-x86_64`、`aarch64` 等其它平台标记的会被跳过。
+- 库名按文件名推导：`libcalc.so` / `calc.dll` → `System.loadLibrary("calc")` 可绑定。
+- 解压目录为 `java.io.tmpdir/luajavane-natives/<指纹>`，指纹包含 JAR 路径、大小与修改时间。
+- 为什么必须这样做：JVM 按“声明 native 方法的类所属加载器”查找 native 实现，父加载器 `System.load` 的库对子加载器定义的类不可见；这里通过重写 `findLibrary` 把提取路径交给 JVM。
+
+**告警**：以下情况会打印到 stderr，并作为 `java.load` 的第二个返回值（字符串数组）返回，最多 10 条，之后折叠为 `further warnings suppressed`。
+
+| 场景 | 告警内容 |
+|---|---|
+| classpath 已提供同名类 | `class X is already provided by the application classpath; the copy in <jar> is shadowed` |
+| 两个已加载 JAR 含同名类 | `class X exists in both <a> and <b>; the copy in <b> will not be used` |
+| 告警本地库但无匹配平台 | `no native library matching <platform> found in <jar> (N entries skipped)` |
+| 同名本地库来自不同 JAR | `native library 'x' already provided by <a>; ignoring <b>` |
+
+**限制**：
+
+| 项 | 说明 |
+|---|---|
+| 类卸载 | JVM 不支持卸载类，加载后常驻；同路径重复 `java.load` 不会重新读取 |
+| 委派顺序 | 父加载器优先，classpath 中已有同名类会胜出（加载时给出告警，但不会改变结果） |
+| 资源 | `getResource`、`ServiceLoader`（线程上下文加载器）看不到仅由该 JAR 提供的资源 |
+| native 库 | 需 `{natives=true}`；且 JAR 代码必须自己调用 `System.loadLibrary` / `System.load`，仅声明 native 方法不会自动绑定 |
+| 平台 | 只提取当前平台条目；`java.io.tmpdir` 不可写会直接失败 |
+| 文件锁 | `URLClassLoader` 持有 jar 句柄，Windows 下运行期无法删除/覆盖该文件 |
+| 作用域 | 进程级共享（与 `java.store` 一致），跨 `LuaRuntime` 可见 |
+| 格式 | 只支持含 `.class` 的 jar，不支持 Android dex |
+
+`java.load` 会执行 JAR 中的代码（含本地库），只应加载可信文件。`java.createProxy` 的接口、`java.runAsync` 的类名同样可以指向已加载 JAR 中的类型。
+
 ---
 
 ## 3. 创建 Java 对象（调用构造器）
@@ -158,11 +219,14 @@ Lua 的 table 可直接作为 Java 参数传入，Java 侧以 `com.luajava.LuaTa
 
 ```lua
 -- Lua 侧：调用接收 LuaTable 的 Java 方法
+local TestBridge = java.import("com.luajava.TestBridge")  -- 测试夹具，见 test/TestBridge.java
 local t = { name = "lua", n = 5 }
 TestBridge.analyze(t)   -- Java 读取字段
 TestBridge.touch(t)     -- Java 原地修改
 print(t.x)              -- 50（Java 写入后 Lua 立即可见）
 ```
+
+> `TestBridge` 是 `test/` 下的测试夹具，运行 `make test` 后位于 `out/`；后续小节沿用该 import。
 
 ```java
 // Java 侧
@@ -551,4 +615,4 @@ print(java.fetch("counter"))     -- 100
 - Java 侧 API 文档（LuaRuntime 等）见 `docs/` 目录或源码注释。
 
 ---
-*本文档对应 LuaJavaNE 版本 2.4.1。*
+*本文档对应 LuaJavaNE 版本 2.5.1。*

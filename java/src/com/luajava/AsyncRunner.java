@@ -53,7 +53,8 @@ public class AsyncRunner {
     public static String runStatic(String className, String methodName, String[] args, boolean expandArrays) {
         try {
             try {
-                Class<?> cls = Class.forName(className);
+                Class<?> cls = JarLoader.resolve(className);
+                if (cls == null) throw new ClassNotFoundException(className);
                 if (methodName.equals("new")) return callConstructor(cls, args);
                 return callMethod(cls, null, methodName, args, expandArrays);
             } catch (Throwable e) {
@@ -363,11 +364,7 @@ public class AsyncRunner {
      */
     public static boolean isInstance(Object obj, String className) {
         if (obj == null) return false;
-        try {
-            Class<?> cls = Class.forName(className);
-            return cls.isInstance(obj);
-        } catch (ClassNotFoundException e) {
-            return false;
-        }
+        Class<?> cls = JarLoader.resolve(className);
+        return cls != null && cls.isInstance(obj);
     }
 }

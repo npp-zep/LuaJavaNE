@@ -56,9 +56,110 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_compile_definitions(lua PRIVATE LUA_USE_LINUX)
 endif()
 
-# ========== 2. 查找 JNI ==========
-find_package(JNI REQUIRED)
+# ========== 2. 查找 JNI（不强制 AWT） ==========
+# 旧版 CMake 的 FindJNI 把 JAVA_AWT_LIBRARY（jawt）列为必需项，headless JDK
+# （openjdk-*-headless、Termux 等）没有 libjawt 时会直接判定 JNI 未找到。
+# 本项目不使用 AWT，只需要 jni.h 与 libjvm，因此这里把 AWT 视为可选。
+
+set(_JNI_INCLUDE_DIRS "")
+set(_JNI_JVM_LIBRARY "")
+
+# 2.1 先交给 CMake 查找（可处理 macOS framework / Windows 布局）。
+#     即使 FindJNI 因缺少 AWT 而判定失败，它仍会填充头文件与 libjvm 变量。
+find_package(JNI QUIET)
+if(JNI_INCLUDE_DIRS)
+    set(_JNI_INCLUDE_DIRS ${JNI_INCLUDE_DIRS})
+endif()
+if(JAVA_JVM_LIBRARY)
+    set(_JNI_JVM_LIBRARY "${JAVA_JVM_LIBRARY}")
+endif()
+
+# 2.2 缺失时按 JAVA_HOME 手工定位
+if(NOT _JNI_INCLUDE_DIRS OR NOT _JNI_JVM_LIBRARY)
+    set(_JAVA_HOME_CANDIDATES "")
+
+    if(JAVA_HOME)
+        list(APPEND _JAVA_HOME_CANDIDATES "${JAVA_HOME}")
+    endif()
+    if(DEFINED ENV{JAVA_HOME} AND NOT "$ENV{JAVA_HOME}" STREQUAL "")
+        list(APPEND _JAVA_HOME_CANDIDATES "$ENV{JAVA_HOME}")
+    endif()
+    if(DEFINED ENV{JDK_HOME} AND NOT "$ENV{JDK_HOME}" STREQUAL "")
+        list(APPEND _JAVA_HOME_CANDIDATES "$ENV{JDK_HOME}")
+    endif()
+
+    if(APPLE)
+        execute_process(COMMAND /usr/libexec/java_home
+            OUTPUT_VARIABLE _MAC_JAVA_HOME
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET)
+        if(_MAC_JAVA_HOME)
+            list(APPEND _JAVA_HOME_CANDIDATES "${_MAC_JAVA_HOME}")
+        endif()
+    endif()
+
+    # 从 PATH 中的 javac 反推 JAVA_HOME（REALPATH 会展开 alternatives 软链）
+    find_program(_JAVAC_EXECUTABLE NAMES javac)
+    if(_JAVAC_EXECUTABLE)
+        get_filename_component(_JAVAC_REAL "${_JAVAC_EXECUTABLE}" REALPATH)
+        get_filename_component(_JAVAC_BIN_DIR "${_JAVAC_REAL}" DIRECTORY)
+        get_filename_component(_JAVA_HOME_FROM_JAVAC "${_JAVAC_BIN_DIR}" DIRECTORY)
+        list(APPEND _JAVA_HOME_CANDIDATES "${_JAVA_HOME_FROM_JAVAC}")
+    endif()
+
+    if(NOT _JNI_INCLUDE_DIRS)
+        foreach(_home IN LISTS _JAVA_HOME_CANDIDATES)
+            if(EXISTS "${_home}/include/jni.h")
+                list(APPEND _JNI_INCLUDE_DIRS "${_home}/include")
+                file(GLOB _JNI_MD_HEADERS "${_home}/include/*/jni_md.h")
+                foreach(_md IN LISTS _JNI_MD_HEADERS)
+                    get_filename_component(_md_dir "${_md}" DIRECTORY)
+                    list(APPEND _JNI_INCLUDE_DIRS "${_md_dir}")
+                endforeach()
+                break()
+            endif()
+        endforeach()
+    endif()
+
+    if(NOT _JNI_JVM_LIBRARY)
+        foreach(_home IN LISTS _JAVA_HOME_CANDIDATES)
+            foreach(_lib
+                    "${_home}/lib/server/libjvm.so"
+                    "${_home}/lib/server/libjvm.dylib"
+                    "${_home}/jre/lib/server/libjvm.so"
+                    "${_home}/jre/lib/server/libjvm.dylib"
+                    "${_home}/lib/client/libjvm.so"
+                    "${_home}/bin/server/jvm.dll")
+                if(EXISTS "${_lib}")
+                    set(_JNI_JVM_LIBRARY "${_lib}")
+                    break()
+                endif()
+            endforeach()
+            if(_JNI_JVM_LIBRARY)
+                break()
+            endif()
+        endforeach()
+    endif()
+
+    if(NOT _JNI_JVM_LIBRARY)
+        find_library(_JNI_JVM_LIBRARY_FOUND NAMES jvm)
+        if(_JNI_JVM_LIBRARY_FOUND)
+            set(_JNI_JVM_LIBRARY "${_JNI_JVM_LIBRARY_FOUND}")
+        endif()
+    endif()
+endif()
+
+if(NOT _JNI_INCLUDE_DIRS OR NOT _JNI_JVM_LIBRARY)
+    message(FATAL_ERROR
+        "JNI not found (jni.h and libjvm are required; AWT/jawt is NOT required).\n"
+        "Install a JDK 17+ and set JAVA_HOME, or install CMake >= 3.24.")
+endif()
+
+set(JNI_INCLUDE_DIRS ${_JNI_INCLUDE_DIRS})
+set(JNI_LIBRARIES "${_JNI_JVM_LIBRARY}")
 include_directories(${JNI_INCLUDE_DIRS})
+message(STATUS "JNI include: ${JNI_INCLUDE_DIRS}")
+message(STATUS "JNI jvm library: ${JNI_LIBRARIES}")
 
 # ========== 3. Sleef SIMD 库（默认启用；x86_64 走 AVX2 4 宽向量 API） ==========
 # 说明：clac 批量数学函数使用 Sleef 的 d4 向量 API（Sleef_xxxd4_u10/u35avx2），
